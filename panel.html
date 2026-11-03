@@ -32,6 +32,12 @@
   .small{font-size:12px;color:var(--muted)}
   .actions button{padding:5px 10px;font-size:12px}
   details summary{cursor:pointer;color:var(--accent);font-weight:600}
+  .scores{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:12px 0}
+  .score{background:var(--bg);border-radius:10px;padding:10px;text-align:center}
+  .score .v{font-size:22px;font-weight:700}.score .k{font-size:12px;color:var(--muted)}
+  .big{font-size:40px;font-weight:800;color:var(--accent)}
+  .an h3{margin:14px 0 6px;font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .an ul{margin:0;padding-left:18px}.warn{background:#fee2e2;color:#991b1b;padding:10px;border-radius:8px}
 </style>
 </head>
 <body>
@@ -73,12 +79,14 @@
     <div class="row" style="justify-content:space-between">
       <strong id="rtitle"></strong>
       <div class="actions">
+        <button onclick="analyze()" id="anbtn">Analiz et</button>
         <button class="secondary" onclick="copyText()">Metni kopyala</button>
         <button class="secondary" onclick="dl('txt')">TXT indir</button>
         <button class="secondary" onclick="dl('json')">JSON indir</button>
       </div>
     </div>
     <div class="dialogue" id="rdialogue" style="margin-top:10px"></div>
+    <div id="analysis" hidden style="margin-top:16px"></div>
   </div>
 </main>
 
@@ -146,8 +154,32 @@ async function startQueue(){
 }
 
 function colorize(d){return d.replace(/\[SPEAKER_(\d+)\]/g,(m,n)=>`<span class="sp${n%4}">[Konuşmacı ${+n+1}]</span>`)}
-function show(id){current=queue.find(q=>q.id==id);if(!current)return;$('#result').hidden=false;$('#rtitle').textContent=current.file.name;$('#rdialogue').innerHTML=colorize(escapeHtml(current.result.dialogue||current.result.text||''));$('#result').scrollIntoView({behavior:'smooth'})}
+function show(id){current=queue.find(q=>q.id==id);if(!current)return;$('#result').hidden=false;$('#rtitle').textContent=current.file.name;$('#rdialogue').innerHTML=colorize(escapeHtml(current.result.dialogue||current.result.text||''));const an=$('#analysis');if(current.result.analysis){an.hidden=false;renderAnalysis(current.result.analysis)}else{an.hidden=true;an.innerHTML=''}$('#result').scrollIntoView({behavior:'smooth'})}
 function escapeHtml(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+async function analyze(){
+  if(!current)return; const btn=$('#anbtn'); btn.disabled=true; btn.textContent='Analiz ediliyor…';
+  const box=$('#analysis'); box.hidden=false; box.innerHTML='<span class="small">Claude görüşmeyi değerlendiriyor (20-40 sn)…</span>';
+  try{
+    const r=await fetch('/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dialogue:current.result.dialogue})});
+    if(r.status===401){location.href='/login';return}
+    const a=await r.json(); if(!r.ok)throw new Error(a.detail||('HTTP '+r.status));
+    current.result.analysis=a; renderAnalysis(a);
+  }catch(e){box.innerHTML='<div class="warn">Analiz hatası: '+escapeHtml(e.message)+'</div>'}
+  btn.disabled=false; btn.textContent='Analiz et';
+}
+function renderAnalysis(a){
+  const box=$('#analysis'); if(a.ham){box.innerHTML='<pre class="dialogue">'+escapeHtml(a.ham)+'</pre>';return}
+  const names={karsilama:'Karşılama',dinleme_ve_anlama:'Dinleme & anlama',bilgi_dogrulugu:'Bilgi doğruluğu',satis_ve_yonlendirme:'Satış & yönlendirme',nezaket_ve_ton:'Nezaket & ton',kapanis:'Kapanış'};
+  const sp=a.temsilci?String(a.temsilci).replace(/SPEAKER_(\d+)/,(m,n)=>'Konuşmacı '+(+n+1)):'?';
+  let h='<div class="an"><div class="row" style="gap:20px;align-items:center"><div class="big">'+(a.genel_puan??'–')+'<span class="small">/100</span></div><div><div><b>Temsilci:</b> '+escapeHtml(sp)+' · <b>Sonuç:</b> '+escapeHtml(a.sonuc||'')+'</div><div class="small">'+escapeHtml(a.ozet||'')+'</div></div></div>';
+  if(a.uyari)h+='<div class="warn" style="margin-top:10px">⚠ '+escapeHtml(a.uyari)+'</div>';
+  h+='<div class="scores">'+Object.entries(a.puanlar||{}).map(([k,v])=>'<div class="score"><div class="v">'+v+'</div><div class="k">'+(names[k]||k)+'</div></div>').join('')+'</div>';
+  h+='<h3>Müşteri talebi</h3><div>'+escapeHtml(a.musteri_talebi||'')+'</div>';
+  if(a.guclu_yonler?.length)h+='<h3>Güçlü yönler</h3><ul>'+a.guclu_yonler.map(x=>'<li>'+escapeHtml(x)+'</li>').join('')+'</ul>';
+  if(a.gelistirilecekler?.length)h+='<h3>Geliştirilecekler</h3><ul>'+a.gelistirilecekler.map(x=>'<li>'+escapeHtml(x)+'</li>').join('')+'</ul>';
+  if(a.kacirilan_firsat)h+='<h3>Kaçırılan fırsat</h3><div>'+escapeHtml(a.kacirilan_firsat)+'</div>';
+  box.innerHTML=h+'</div>';
+}
 function copyText(){if(current)navigator.clipboard.writeText(current.result.dialogue||'').then(()=>$('#status').textContent='kopyalandı')}
 function dl(type){if(!current)return;const base=current.file.name.replace(/\.[^.]+$/,'');const blob=type==='txt'?new Blob([current.result.dialogue],{type:'text/plain'}):new Blob([JSON.stringify(current.result,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=base+'.'+type;a.click()}
 function downloadAll(){const done=queue.filter(q=>q.status==='ok').map(q=>({file:q.file.name,...q.result}));if(!done.length){alert('Henüz tamamlanan dosya yok.');return}const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(done,null,2)],{type:'application/json'}));a.download='whisperx-sonuclar.json';a.click()}

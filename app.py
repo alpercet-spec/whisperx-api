@@ -169,3 +169,86 @@ def transcribe(
         "dialogue": dialogue,
         "segments": segments,
     }
+
+
+# ---------------- Analiz (Claude) ----------------
+import json
+import urllib.error
+import urllib.request
+
+from pydantic import BaseModel
+
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+ANALYZE_MODEL = os.environ.get("ANALYZE_MODEL", "claude-sonnet-5-5")
+
+ANALYZE_PROMPT = """Sen bir estetik, dermatoloji ve kalıcı makyaj kliniğinin çağrı merkezi kalite uzmanısın.
+Aşağıda bir telefon görüşmesinin otomatik dökümü var. Konuşmacılar SPEAKER_00 / SPEAKER_01 olarak etiketli;
+önce hangisinin TEMSİLCİ (klinik çalışanı) hangisinin MÜŞTERİ olduğunu bağlamdan belirle.
+Döküm 8 kHz telefon kaydından geldiği için kelime hataları olabilir; klinik terimlerini bağlamdan düzelt
+(ör. "kaş bildirme" = kaş microblading, "biyo-link" = microblading, "kıl tekniği", "pudralama", "kontrol seansı", "dolgu", "botoks", "lazer epilasyon").
+
+Sadece aşağıdaki JSON şemasında yanıt ver, başka hiçbir şey yazma:
+{
+  "temsilci": "SPEAKER_00 veya SPEAKER_01",
+  "ozet": "2-3 cümle görüşme özeti",
+  "musteri_talebi": "müşteri ne istedi",
+  "sonuc": "randevu alındı / bilgi verildi / WhatsApp'a yönlendirildi / çözümsüz / diğer",
+  "puanlar": {
+    "karsilama": 0-10,
+    "dinleme_ve_anlama": 0-10,
+    "bilgi_dogrulugu": 0-10,
+    "satis_ve_yonlendirme": 0-10,
+    "nezaket_ve_ton": 0-10,
+    "kapanis": 0-10
+  },
+  "genel_puan": 0-100,
+  "guclu_yonler": ["..."],
+  "gelistirilecekler": ["..."],
+  "kacirilan_firsat": "varsa satış/randevu fırsatı, yoksa null",
+  "uyari": "ciddi hata, yanlış bilgi, kaba davranış varsa; yoksa null"
+}
+
+GÖRÜŞME DÖKÜMÜ:
+"""
+
+
+class AnalyzeIn(BaseModel):
+    dialogue: str
+
+
+@app.post("/analyze")
+def analyze(
+    body: AnalyzeIn,
+    authorization: str | None = Header(None),
+    wx_session: str | None = Cookie(None),
+):
+    check_key(authorization, wx_session)
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(500, "ANTHROPIC_API_KEY ayarlanmadı")
+
+    payload = {
+        "model": ANALYZE_MODEL,
+        "max_tokens": 1500,
+        "messages": [{"role": "user", "content": ANALYZE_PROMPT + body.dialogue[:30000]}],
+    }
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=json.dumps(payload).encode(),
+        headers={
+            "content-type": "application/json",
+            "x-api-key": ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            data = json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        raise HTTPException(502, f"Claude API hatası: {e.read().decode()[:300]}")
+
+    text = "".join(b.get("text", "") for b in data.get("content", []))
+    text = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return {"ham": text}
