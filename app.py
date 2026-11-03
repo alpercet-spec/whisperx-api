@@ -20,10 +20,11 @@ lock = threading.Lock()
 print("Model yükleniyor...", flush=True)
 asr_model = whisperx.load_model(MODEL_NAME, DEVICE, compute_type=COMPUTE, threads=THREADS)
 align_model, align_meta = whisperx.load_align_model(language_code=DEFAULT_LANG, device=DEVICE)
+DIARIZE_MODEL = os.environ.get("DIARIZE_MODEL", "pyannote/speaker-diarization-3.1")
 try:
-    diarize_model = DiarizationPipeline(token=HF_TOKEN, device=DEVICE)
+    diarize_model = DiarizationPipeline(model_name=DIARIZE_MODEL, token=HF_TOKEN, device=DEVICE)
 except TypeError:
-    diarize_model = DiarizationPipeline(use_auth_token=HF_TOKEN, device=DEVICE)
+    diarize_model = DiarizationPipeline(model_name=DIARIZE_MODEL, use_auth_token=HF_TOKEN, device=DEVICE)
 print("Hazır.", flush=True)
 
 
