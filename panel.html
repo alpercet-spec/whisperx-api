@@ -38,11 +38,11 @@
 <header>
   <h1>WhisperX — Ses → Metin Paneli</h1>
   <span class="status" id="status">bağlantı kontrol ediliyor…</span>
+  <a href="/logout" style="margin-left:auto;font-size:13px;color:var(--accent)">Çıkış yap</a>
 </header>
 <main>
   <div class="card">
     <div class="row">
-      <label>API anahtarı <input type="password" id="apikey" placeholder="wx-…" style="width:220px"></label>
       <label>Dil <select id="lang"><option value="tr">Türkçe</option><option value="en">English</option><option value="de">Deutsch</option><option value="ar">العربية</option><option value="ru">Русский</option></select></label>
       <label>Konuşmacı sayısı <input type="number" id="minsp" value="2" min="1" max="10" style="width:60px"> – <input type="number" id="maxsp" value="2" min="1" max="10" style="width:60px"></label>
       <button class="secondary" onclick="saveSettings()">Ayarları kaydet</button>
@@ -88,8 +88,8 @@ const queue=[]; let running=false, current=null;
 const fmt=b=>b>1048576?(b/1048576).toFixed(1)+' MB':(b/1024).toFixed(0)+' KB';
 const hhmm=s=>{s=Math.round(s);return (Math.floor(s/60))+':'+String(s%60).padStart(2,'0')};
 
-function loadSettings(){try{const s=JSON.parse(localStorage.getItem('wx_settings')||'{}');if(s.key)$('#apikey').value=s.key;if(s.lang)$('#lang').value=s.lang;if(s.min)$('#minsp').value=s.min;if(s.max)$('#maxsp').value=s.max;}catch(e){}}
-function saveSettings(){try{localStorage.setItem('wx_settings',JSON.stringify({key:$('#apikey').value,lang:$('#lang').value,min:$('#minsp').value,max:$('#maxsp').value}));$('#status').textContent='ayarlar kaydedildi';}catch(e){}}
+function loadSettings(){try{const s=JSON.parse(localStorage.getItem('wx_settings')||'{}');if(s.lang)$('#lang').value=s.lang;if(s.min)$('#minsp').value=s.min;if(s.max)$('#maxsp').value=s.max;}catch(e){}}
+function saveSettings(){try{localStorage.setItem('wx_settings',JSON.stringify({lang:$('#lang').value,min:$('#minsp').value,max:$('#maxsp').value}));$('#status').textContent='ayarlar kaydedildi';}catch(e){}}
 loadSettings();
 
 fetch('/health').then(r=>r.json()).then(j=>$('#status').textContent='servis hazır · model: '+j.model).catch(()=>$('#status').textContent='servise ulaşılamıyor');
@@ -123,8 +123,7 @@ function retry(id){const q=queue.find(q=>q.id==id);if(q){q.status='wait';q.error
 function clearDone(){for(let i=queue.length-1;i>=0;i--)if(queue[i].status==='ok')queue.splice(i,1);render()}
 
 async function startQueue(){
-  if(running)return; if(!$('#apikey').value){alert('API anahtarını gir.');return}
-  saveSettings(); running=true; render();
+  if(running)return; saveSettings(); running=true; render();
   for(const q of queue){
     if(q.status!=='wait')continue;
     q.status='run';render();
@@ -135,8 +134,8 @@ async function startQueue(){
       fd.append('language',$('#lang').value);
       fd.append('min_speakers',$('#minsp').value);
       fd.append('max_speakers',$('#maxsp').value);
-      const r=await fetch('/transcribe',{method:'POST',headers:{'Authorization':'Bearer '+$('#apikey').value},body:fd});
-      if(!r.ok){throw new Error(r.status===401?'API anahtarı yanlış':'HTTP '+r.status)}
+      const r=await fetch('/transcribe',{method:'POST',body:fd});
+      if(!r.ok){if(r.status===401){location.href='/login';return} throw new Error('HTTP '+r.status)}
       q.result=await r.json(); q.status='ok';
       try{const hist=JSON.parse(localStorage.getItem('wx_history')||'[]');hist.unshift({name:q.file.name,date:new Date().toISOString(),result:q.result});localStorage.setItem('wx_history',JSON.stringify(hist.slice(0,50)));}catch(e){}
     }catch(e){q.status='err';q.error=e.message}
