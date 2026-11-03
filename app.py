@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import os
 import secrets
+import subprocess
 import tempfile
 import threading
 import time
@@ -29,7 +30,7 @@ lock = threading.Lock()
 print("Model yükleniyor...", flush=True)
 asr_model = whisperx.load_model(MODEL_NAME, DEVICE, compute_type=COMPUTE, threads=THREADS)
 align_model, align_meta = whisperx.load_align_model(language_code=DEFAULT_LANG, device=DEVICE)
-DIARIZE_MODEL = os.environ.get("DIARIZE_MODEL", "pyannote/speaker-diarization-3.1")
+DIARIZE_MODEL = os.environ.get("DIARIZE_MODEL", "pyannote/speaker-diarization-community-1")
 try:
     diarize_model = DiarizationPipeline(model_name=DIARIZE_MODEL, token=HF_TOKEN, device=DEVICE)
 except TypeError:
@@ -124,9 +125,16 @@ def transcribe(
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename or "a.wav")[1]) as tmp:
         tmp.write(file.file.read())
-        path = tmp.name
+        raw_path = tmp.name
+    path = raw_path + ".wav"
 
     try:
+        # Ön işleme: mono 16 kHz, telefon bandı filtresi, ses seviyesi normalizasyonu
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", raw_path, "-ac", "1", "-ar", "16000",
+             "-af", "highpass=f=200,lowpass=f=3400,loudnorm=I=-16:TP=-1.5:LRA=11", path],
+            check=True,
+        )
         with lock:
             audio = whisperx.load_audio(path)
             result = asr_model.transcribe(audio, language=language, batch_size=8)
@@ -140,7 +148,9 @@ def transcribe(
             diar = diarize_model(audio, min_speakers=min_speakers, max_speakers=max_speakers)
             result = whisperx.assign_word_speakers(diar, result)
     finally:
-        os.remove(path)
+        for p in (raw_path, path):
+            if os.path.exists(p):
+                os.remove(p)
 
     segments = [
         {
