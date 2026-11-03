@@ -3,6 +3,7 @@ import tempfile
 import threading
 
 import whisperx
+from whisperx.diarize import DiarizationPipeline
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 
 HF_TOKEN = os.environ["HF_TOKEN"]
@@ -19,7 +20,7 @@ lock = threading.Lock()
 print("Model yükleniyor...", flush=True)
 asr_model = whisperx.load_model(MODEL_NAME, DEVICE, compute_type=COMPUTE, threads=THREADS)
 align_model, align_meta = whisperx.load_align_model(language_code=DEFAULT_LANG, device=DEVICE)
-diarize_model = whisperx.DiarizationPipeline(use_auth_token=HF_TOKEN, device=DEVICE)
+diarize_model = DiarizationPipeline(use_auth_token=HF_TOKEN, device=DEVICE)
 print("Hazır.", flush=True)
 
 
