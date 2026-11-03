@@ -7,7 +7,7 @@ WORKDIR /app
 RUN pip install --no-cache-dir torch==2.4.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cpu \
  && pip install --no-cache-dir whisperx fastapi uvicorn[standard] python-multipart
 
-COPY app.py .
+COPY app.py panel.html ./
 
 ENV HF_HOME=/models
 EXPOSE 8000

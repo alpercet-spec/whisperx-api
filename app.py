@@ -5,6 +5,7 @@ import threading
 import whisperx
 from whisperx.diarize import DiarizationPipeline
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi.responses import HTMLResponse
 
 HF_TOKEN = os.environ["HF_TOKEN"]
 API_KEY = os.environ.get("API_KEY", "")
@@ -31,6 +32,12 @@ print("Hazır.", flush=True)
 def check_key(authorization: str | None):
     if API_KEY and authorization != f"Bearer {API_KEY}":
         raise HTTPException(401, "Geçersiz API key")
+
+
+@app.get("/", response_class=HTMLResponse)
+def panel():
+    with open(os.path.join(os.path.dirname(__file__), "panel.html"), encoding="utf-8") as f:
+        return f.read()
 
 
 @app.get("/health")

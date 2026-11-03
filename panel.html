@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WhisperX Panel</title>
+<style>
+  :root{--bg:#f4f5f7;--card:#fff;--text:#1a1d21;--muted:#6b7280;--line:#e5e7eb;--accent:#0f766e;--accent2:#14b8a6;--ok:#16a34a;--err:#dc2626;--warn:#d97706}
+  @media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--text:#e7e9ee;--muted:#9aa3b2;--line:#2a2f3a}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{padding:18px 24px;border-bottom:1px solid var(--line);background:var(--card);display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  header h1{font-size:18px;margin:0}
+  header .status{font-size:13px;color:var(--muted)}
+  main{max-width:1100px;margin:0 auto;padding:20px 16px;display:grid;gap:18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  label{font-size:13px;color:var(--muted)}
+  input[type=text],input[type=password],input[type=number],select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--text);font-size:14px}
+  button{padding:9px 14px;border:0;border-radius:8px;background:var(--accent);color:#fff;font-weight:600;cursor:pointer}
+  button.secondary{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .drop{border:2px dashed var(--line);border-radius:12px;padding:34px;text-align:center;color:var(--muted);cursor:pointer;transition:.15s}
+  .drop.over{border-color:var(--accent2);color:var(--accent2);background:rgba(20,184,166,.06)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{padding:10px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
+  .b-wait{background:#e5e7eb;color:#374151}.b-run{background:#fef3c7;color:#92400e}.b-ok{background:#dcfce7;color:#166534}.b-err{background:#fee2e2;color:#991b1b}
+  .dialogue{white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;background:var(--bg);padding:12px;border-radius:8px;max-height:420px;overflow:auto}
+  .sp0{color:#0369a1}.sp1{color:#b45309}.sp2{color:#7c3aed}.sp3{color:#be185d}
+  .small{font-size:12px;color:var(--muted)}
+  .actions button{padding:5px 10px;font-size:12px}
+  details summary{cursor:pointer;color:var(--accent);font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>WhisperX — Ses → Metin Paneli</h1>
+  <span class="status" id="status">bağlantı kontrol ediliyor…</span>
+</header>
+<main>
+  <div class="card">
+    <div class="row">
+      <label>API anahtarı <input type="password" id="apikey" placeholder="wx-…" style="width:220px"></label>
+      <label>Dil <select id="lang"><option value="tr">Türkçe</option><option value="en">English</option><option value="de">Deutsch</option><option value="ar">العربية</option><option value="ru">Русский</option></select></label>
+      <label>Konuşmacı sayısı <input type="number" id="minsp" value="2" min="1" max="10" style="width:60px"> – <input type="number" id="maxsp" value="2" min="1" max="10" style="width:60px"></label>
+      <button class="secondary" onclick="saveSettings()">Ayarları kaydet</button>
+    </div>
+    <p class="small">Ayarlar bu tarayıcıda saklanır. Çağrı merkezi kayıtları için 2–2 bırak (müşteri + temsilci).</p>
+  </div>
+
+  <div class="card">
+    <div class="drop" id="drop">Ses dosyalarını buraya sürükle ya da tıkla<br><span class="small">mp3, wav, m4a, ogg, webm, mp4 — birden fazla seçebilirsin</span>
+      <input type="file" id="file" multiple accept="audio/*,video/mp4,.mp3,.wav,.m4a,.ogg,.webm,.mp4" hidden>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button id="start" onclick="startQueue()" disabled>İşlemeyi başlat</button>
+      <button class="secondary" onclick="clearDone()">Bitenleri temizle</button>
+      <button class="secondary" onclick="downloadAll()">Tümünü indir (JSON)</button>
+      <span class="small" id="qinfo"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <table>
+      <thead><tr><th>Dosya</th><th>Boyut</th><th>Durum</th><th>Süre</th><th>İşlem</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <div class="card" id="result" hidden>
+    <div class="row" style="justify-content:space-between">
+      <strong id="rtitle"></strong>
+      <div class="actions">
+        <button class="secondary" onclick="copyText()">Metni kopyala</button>
+        <button class="secondary" onclick="dl('txt')">TXT indir</button>
+        <button class="secondary" onclick="dl('json')">JSON indir</button>
+      </div>
+    </div>
+    <div class="dialogue" id="rdialogue" style="margin-top:10px"></div>
+  </div>
+</main>
+
+<script>
+const $=s=>document.querySelector(s);
+const queue=[]; let running=false, current=null;
+const fmt=b=>b>1048576?(b/1048576).toFixed(1)+' MB':(b/1024).toFixed(0)+' KB';
+const hhmm=s=>{s=Math.round(s);return (Math.floor(s/60))+':'+String(s%60).padStart(2,'0')};
+
+function loadSettings(){try{const s=JSON.parse(localStorage.getItem('wx_settings')||'{}');if(s.key)$('#apikey').value=s.key;if(s.lang)$('#lang').value=s.lang;if(s.min)$('#minsp').value=s.min;if(s.max)$('#maxsp').value=s.max;}catch(e){}}
+function saveSettings(){try{localStorage.setItem('wx_settings',JSON.stringify({key:$('#apikey').value,lang:$('#lang').value,min:$('#minsp').value,max:$('#maxsp').value}));$('#status').textContent='ayarlar kaydedildi';}catch(e){}}
+loadSettings();
+
+fetch('/health').then(r=>r.json()).then(j=>$('#status').textContent='servis hazır · model: '+j.model).catch(()=>$('#status').textContent='servise ulaşılamıyor');
+
+const drop=$('#drop'), fileIn=$('#file');
+drop.onclick=()=>fileIn.click();
+drop.ondragover=e=>{e.preventDefault();drop.classList.add('over')};
+drop.ondragleave=()=>drop.classList.remove('over');
+drop.ondrop=e=>{e.preventDefault();drop.classList.remove('over');addFiles(e.dataTransfer.files)};
+fileIn.onchange=()=>{addFiles(fileIn.files);fileIn.value=''};
+
+function addFiles(list){for(const f of list){queue.push({id:Date.now()+Math.random(),file:f,status:'wait',result:null,secs:0});}render();}
+function render(){
+  const tb=$('#rows');tb.innerHTML='';
+  for(const q of queue){
+    const tr=document.createElement('tr');
+    const badge={wait:'<span class="badge b-wait">bekliyor</span>',run:'<span class="badge b-run">işleniyor…</span>',ok:'<span class="badge b-ok">tamam</span>',err:'<span class="badge b-err">hata</span>'}[q.status];
+    let act='';
+    if(q.status==='ok')act=`<button class="secondary" onclick="show('${q.id}')">Göster</button>`;
+    if(q.status==='err')act=`<span class="small">${q.error||''}</span> <button class="secondary" onclick="retry('${q.id}')">Tekrar</button>`;
+    if(q.status==='wait')act=`<button class="secondary" onclick="remove('${q.id}')">Kaldır</button>`;
+    tr.innerHTML=`<td>${q.file.name}</td><td>${fmt(q.file.size)}</td><td>${badge}</td><td>${q.secs?hhmm(q.secs):''}</td><td class="actions">${act}</td>`;
+    tb.appendChild(tr);
+  }
+  const waiting=queue.filter(q=>q.status==='wait').length;
+  $('#start').disabled=running||waiting===0;
+  $('#qinfo').textContent=waiting?`${waiting} dosya sırada`:(running?'çalışıyor':'');
+}
+function remove(id){const i=queue.findIndex(q=>q.id==id);if(i>-1)queue.splice(i,1);render()}
+function retry(id){const q=queue.find(q=>q.id==id);if(q){q.status='wait';q.error='';render();}}
+function clearDone(){for(let i=queue.length-1;i>=0;i--)if(queue[i].status==='ok')queue.splice(i,1);render()}
+
+async function startQueue(){
+  if(running)return; if(!$('#apikey').value){alert('API anahtarını gir.');return}
+  saveSettings(); running=true; render();
+  for(const q of queue){
+    if(q.status!=='wait')continue;
+    q.status='run';render();
+    const t0=Date.now(); const timer=setInterval(()=>{q.secs=(Date.now()-t0)/1000;render()},1000);
+    try{
+      const fd=new FormData();
+      fd.append('file',q.file,q.file.name);
+      fd.append('language',$('#lang').value);
+      fd.append('min_speakers',$('#minsp').value);
+      fd.append('max_speakers',$('#maxsp').value);
+      const r=await fetch('/transcribe',{method:'POST',headers:{'Authorization':'Bearer '+$('#apikey').value},body:fd});
+      if(!r.ok){throw new Error(r.status===401?'API anahtarı yanlış':'HTTP '+r.status)}
+      q.result=await r.json(); q.status='ok';
+      try{const hist=JSON.parse(localStorage.getItem('wx_history')||'[]');hist.unshift({name:q.file.name,date:new Date().toISOString(),result:q.result});localStorage.setItem('wx_history',JSON.stringify(hist.slice(0,50)));}catch(e){}
+    }catch(e){q.status='err';q.error=e.message}
+    clearInterval(timer); q.secs=(Date.now()-t0)/1000; render();
+    if(q.status==='ok')show(q.id);
+  }
+  running=false; render();
+}
+
+function colorize(d){return d.replace(/\[SPEAKER_(\d+)\]/g,(m,n)=>`<span class="sp${n%4}">[Konuşmacı ${+n+1}]</span>`)}
+function show(id){current=queue.find(q=>q.id==id);if(!current)return;$('#result').hidden=false;$('#rtitle').textContent=current.file.name;$('#rdialogue').innerHTML=colorize(escapeHtml(current.result.dialogue||current.result.text||''));$('#result').scrollIntoView({behavior:'smooth'})}
+function escapeHtml(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+function copyText(){if(current)navigator.clipboard.writeText(current.result.dialogue||'').then(()=>$('#status').textContent='kopyalandı')}
+function dl(type){if(!current)return;const base=current.file.name.replace(/\.[^.]+$/,'');const blob=type==='txt'?new Blob([current.result.dialogue],{type:'text/plain'}):new Blob([JSON.stringify(current.result,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=base+'.'+type;a.click()}
+function downloadAll(){const done=queue.filter(q=>q.status==='ok').map(q=>({file:q.file.name,...q.result}));if(!done.length){alert('Henüz tamamlanan dosya yok.');return}const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(done,null,2)],{type:'application/json'}));a.download='whisperx-sonuclar.json';a.click()}
+</script>
+</body>
+</html>
