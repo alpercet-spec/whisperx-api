@@ -192,7 +192,7 @@ def analyze_dialogue(dialogue: str, yon=None, dahili=None, tarih=None):
     """Claude'a gönderir; (json_sonuc, usage) döner."""
     prompt = (ANALYZE_PROMPT_TPL.replace("{yon}", str(yon or "")).replace("{dahili}", str(dahili or ""))
               .replace("{kayit_tarihi}", str(tarih or "")).replace("{dokum}", dialogue[:30000]))
-    payload = {"model": ANALYZE_MODEL, "max_tokens": 4000, "messages": [{"role": "user", "content": prompt}]}
+    payload = {"model": ANALYZE_MODEL, "max_tokens": 8000, "messages": [{"role": "user", "content": prompt}]}
     req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(payload).encode(),
         headers={"content-type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01"})
     with urllib.request.urlopen(req, timeout=180) as r:
@@ -202,7 +202,8 @@ def analyze_dialogue(dialogue: str, yon=None, dahili=None, tarih=None):
         text = text.split("\n", 1)[1] if "\n" in text else text
         text = text.rsplit("```", 1)[0].strip()
     try: out = json.loads(text)
-    except json.JSONDecodeError: out = {"ham": text}
+    except json.JSONDecodeError:
+        out = {"ham": text, "kesildi": data.get("stop_reason") == "max_tokens"}
     return out, data.get("usage", {})
 
 
@@ -459,3 +460,15 @@ def analyze_sample(n: int = 5, authorization: str | None = Header(None), wx_sess
     cur.execute("SELECT drive_id, kayit_tarihi, yon, dahili, genel_puan, dokum, analiz FROM kayit_dokumleri WHERE analiz IS NOT NULL ORDER BY guncelleme DESC LIMIT %s", (n,))
     rows = [{"drive_id": r[0], "tarih": str(r[1]), "yon": r[2], "dahili": r[3], "puan": r[4], "dokum": r[5], "analiz": json.loads(r[6])} for r in cur.fetchall()]
     conn.close(); return rows
+
+@app.post("/admin/analyze_reset")
+def analyze_reset(only_broken: bool = True, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    """Analizi sıfırla: only_broken=True -> sadece 'ham' (bozuk JSON) olanlar; False -> tüm analizler."""
+    check_key(authorization, wx_session)
+    conn = _db(); cur = conn.cursor()
+    if only_broken:
+        cur.execute("UPDATE kayit_dokumleri SET analiz=NULL, genel_puan=NULL, temsilci_sp=NULL, sonuc=NULL WHERE analiz IS NOT NULL AND JSON_EXTRACT(analiz,'$.ham') IS NOT NULL")
+    else:
+        cur.execute("UPDATE kayit_dokumleri SET analiz=NULL, genel_puan=NULL, temsilci_sp=NULL, sonuc=NULL WHERE analiz IS NOT NULL")
+    n = cur.rowcount; conn.commit(); conn.close()
+    return {"sifirlanan": n}

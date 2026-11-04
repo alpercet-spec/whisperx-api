@@ -20,6 +20,7 @@ Bu klinik, telefonda müşterilerle konuşan bir yapay zekâ temsilci kuracak. B
 
 ## Çıktı
 Sadece aşağıdaki JSON'u döndür. Alan adlarını değiştirme, başka metin ekleme. Bilinmeyen alanlara null yaz, boş listeler için [] kullan.
+**Kompaktlık kuralları (zorunlu):** JSON'u girintisiz/tek satır yaz. Her liste en fazla 8 madde. Her metin alanı kısa olsun (kalıp cümleler hariç, en fazla ~120 karakter). Parantez içi açıklama, gerekçe, "döküm hatası olabilir" gibi yorumlar yazma — belirsizlik için sadece `guven` alanını ve `dokum_hatasi_suphesi` listesini kullan. İsim alanlarına yalnızca isim yaz. Toplam çıktı 2.500 token'ı geçmesin.
 
 {
   "temsilci_speaker": "SPEAKER_00 | SPEAKER_01 | null",
