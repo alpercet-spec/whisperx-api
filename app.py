@@ -178,35 +178,33 @@ from pydantic import BaseModel
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANALYZE_MODEL = os.environ.get("ANALYZE_MODEL", "claude-sonnet-5-5")
 
-ANALYZE_PROMPT = """Sen bir estetik, dermatoloji ve kalıcı makyaj kliniğinin çağrı merkezi kalite uzmanısın.
-Aşağıda bir telefon görüşmesinin otomatik dökümü var. Konuşmacılar SPEAKER_00 / SPEAKER_01 olarak etiketli;
-önce hangisinin TEMSİLCİ (klinik çalışanı) hangisinin MÜŞTERİ olduğunu bağlamdan belirle.
-Döküm 8 kHz telefon kaydından geldiği için kelime hataları olabilir; klinik terimlerini bağlamdan düzelt
-(ör. "kaş bildirme" = kaş microblading, "biyo-link" = microblading, "kıl tekniği", "pudralama", "kontrol seansı", "dolgu", "botoks", "lazer epilasyon").
+def _load_prompt():
+    try:
+        with open(os.path.join(os.path.dirname(__file__), "analiz_prompt.md"), encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return "Görüşmeyi analiz et ve JSON döndür.\nGÖRÜŞME DÖKÜMÜ:\n{dokum}"
+ANALYZE_PROMPT_TPL = _load_prompt()
+ANALYZE_STATE = {"durum": "bekliyor", "secilen": 0, "yapilan": 0, "hata": 0, "son_hata": None, "input_tokens": 0, "output_tokens": 0, "tahmini_usd": 0.0}
+IN_PRICE = float(os.environ.get("ANALYZE_IN_PRICE_PER_M", "3")); OUT_PRICE = float(os.environ.get("ANALYZE_OUT_PRICE_PER_M", "15"))
 
-Sadece aşağıdaki JSON şemasında yanıt ver, başka hiçbir şey yazma:
-{
-  "temsilci": "SPEAKER_00 veya SPEAKER_01",
-  "ozet": "2-3 cümle görüşme özeti",
-  "musteri_talebi": "müşteri ne istedi",
-  "sonuc": "randevu alındı / bilgi verildi / WhatsApp'a yönlendirildi / çözümsüz / diğer",
-  "puanlar": {
-    "karsilama": 0-10,
-    "dinleme_ve_anlama": 0-10,
-    "bilgi_dogrulugu": 0-10,
-    "satis_ve_yonlendirme": 0-10,
-    "nezaket_ve_ton": 0-10,
-    "kapanis": 0-10
-  },
-  "genel_puan": 0-100,
-  "guclu_yonler": ["..."],
-  "gelistirilecekler": ["..."],
-  "kacirilan_firsat": "varsa satış/randevu fırsatı, yoksa null",
-  "uyari": "ciddi hata, yanlış bilgi, kaba davranış varsa; yoksa null"
-}
+def analyze_dialogue(dialogue: str, yon=None, dahili=None, tarih=None):
+    """Claude'a gönderir; (json_sonuc, usage) döner."""
+    prompt = (ANALYZE_PROMPT_TPL.replace("{yon}", str(yon or "")).replace("{dahili}", str(dahili or ""))
+              .replace("{kayit_tarihi}", str(tarih or "")).replace("{dokum}", dialogue[:30000]))
+    payload = {"model": ANALYZE_MODEL, "max_tokens": 4000, "messages": [{"role": "user", "content": prompt}]}
+    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(payload).encode(),
+        headers={"content-type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01"})
+    with urllib.request.urlopen(req, timeout=180) as r:
+        data = json.loads(r.read())
+    text = "".join(b.get("text", "") for b in data.get("content", [])).strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text
+        text = text.rsplit("```", 1)[0].strip()
+    try: out = json.loads(text)
+    except json.JSONDecodeError: out = {"ham": text}
+    return out, data.get("usage", {})
 
-GÖRÜŞME DÖKÜMÜ:
-"""
 
 
 class AnalyzeIn(BaseModel):
@@ -214,41 +212,14 @@ class AnalyzeIn(BaseModel):
 
 
 @app.post("/analyze")
-def analyze(
-    body: AnalyzeIn,
-    authorization: str | None = Header(None),
-    wx_session: str | None = Cookie(None),
-):
+def analyze(body: AnalyzeIn, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
     check_key(authorization, wx_session)
-    if not ANTHROPIC_API_KEY:
-        raise HTTPException(500, "ANTHROPIC_API_KEY ayarlanmadı")
-
-    payload = {
-        "model": ANALYZE_MODEL,
-        "max_tokens": 1500,
-        "messages": [{"role": "user", "content": ANALYZE_PROMPT + body.dialogue[:30000]}],
-    }
-    req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
-        data=json.dumps(payload).encode(),
-        headers={
-            "content-type": "application/json",
-            "x-api-key": ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01",
-        },
-    )
+    if not ANTHROPIC_API_KEY: raise HTTPException(500, "ANTHROPIC_API_KEY ayarlanmadı")
     try:
-        with urllib.request.urlopen(req, timeout=120) as r:
-            data = json.loads(r.read())
+        out, _ = analyze_dialogue(body.dialogue)
     except urllib.error.HTTPError as e:
         raise HTTPException(502, f"Claude API hatası: {e.read().decode()[:300]}")
-
-    text = "".join(b.get("text", "") for b in data.get("content", []))
-    text = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return {"ham": text}
+    return out
 
 
 # ---------------- Arşiv içe aktarma (Ortak Drive -> MySQL) ----------------
@@ -443,3 +414,48 @@ def run_daily(days_back: int = DAILY_DAYS_BACK, authorization: str | None = Head
 @app.get("/admin/daily_status")
 def daily_status(authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
     check_key(authorization, wx_session); return DAILY_STATE
+
+
+
+# ---------------- Toplu analiz (tablo üzerinden) ----------------
+def _analyze_batch_worker(limit, where):
+    ANALYZE_STATE.update(durum="calisiyor", secilen=0, yapilan=0, hata=0, son_hata=None, input_tokens=0, output_tokens=0, tahmini_usd=0.0)
+    try:
+        conn = _db(); cur = conn.cursor()
+        cur.execute(f"SELECT drive_id, dokum, yon, dahili, kayit_tarihi FROM kayit_dokumleri WHERE durum='tamam' AND analiz IS NULL AND CHAR_LENGTH(dokum) > 200 {where} ORDER BY kayit_tarihi DESC, id LIMIT %s", (limit,))
+        rows = cur.fetchall(); ANALYZE_STATE["secilen"] = len(rows)
+        for drive_id, dokum, yon, dahili, tarih in rows:
+            try:
+                out, usage = analyze_dialogue(dokum, yon, dahili, tarih)
+                k = out.get("kalite", {}) if isinstance(out, dict) else {}
+                cur.execute("UPDATE kayit_dokumleri SET analiz=%s, genel_puan=%s, temsilci_sp=%s, sonuc=%s WHERE drive_id=%s",
+                            (json.dumps(out, ensure_ascii=False), k.get("genel_puan"), out.get("temsilci_speaker"), (out.get("sonuc") or None), drive_id))
+                conn.commit(); ANALYZE_STATE["yapilan"] += 1
+                ANALYZE_STATE["input_tokens"] += usage.get("input_tokens", 0); ANALYZE_STATE["output_tokens"] += usage.get("output_tokens", 0)
+                ANALYZE_STATE["tahmini_usd"] = round(ANALYZE_STATE["input_tokens"] / 1e6 * IN_PRICE + ANALYZE_STATE["output_tokens"] / 1e6 * OUT_PRICE, 3)
+            except Exception as e:
+                ANALYZE_STATE["hata"] += 1; ANALYZE_STATE["son_hata"] = str(e)[:300]
+        conn.close(); ANALYZE_STATE["durum"] = "tamam"
+    except Exception as e:
+        ANALYZE_STATE.update(durum="hata", son_hata=str(e)[:500])
+
+@app.post("/admin/analyze_batch")
+def analyze_batch(limit: int = 30, since: str | None = None, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    check_key(authorization, wx_session)
+    if not ANTHROPIC_API_KEY: raise HTTPException(500, "ANTHROPIC_API_KEY ayarlanmadı")
+    if ANALYZE_STATE["durum"] == "calisiyor": return ANALYZE_STATE
+    where = f"AND kayit_tarihi >= '{since}'" if since and _re.fullmatch(r"\d{4}-\d{2}-\d{2}", since) else ""
+    _th.Thread(target=_analyze_batch_worker, args=(limit, where), daemon=True).start()
+    return {"baslatildi": True, "limit": limit}
+
+@app.get("/admin/analyze_status")
+def analyze_status(authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    check_key(authorization, wx_session); return ANALYZE_STATE
+
+@app.get("/admin/analyze_sample")
+def analyze_sample(n: int = 5, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    check_key(authorization, wx_session)
+    conn = _db(); cur = conn.cursor()
+    cur.execute("SELECT drive_id, kayit_tarihi, yon, dahili, genel_puan, dokum, analiz FROM kayit_dokumleri WHERE analiz IS NOT NULL ORDER BY guncelleme DESC LIMIT %s", (n,))
+    rows = [{"drive_id": r[0], "tarih": str(r[1]), "yon": r[2], "dahili": r[3], "puan": r[4], "dokum": r[5], "analiz": json.loads(r[6])} for r in cur.fetchall()]
+    conn.close(); return rows
