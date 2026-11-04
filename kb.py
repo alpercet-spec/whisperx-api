@@ -257,15 +257,17 @@ def register(app, check_key, _db, api_key_getter, model_getter, prices, page_gua
     def kb_ozet(authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
         check_key(authorization, wx_session)
         conn = _db(); cur = conn.cursor(); cur.execute(KB_DDL); conn.commit()
-        cur.execute("SELECT kategori, konu, durum, COUNT(*) FROM bilgi_tabani GROUP BY 1,2,3")
+        cur.execute("SELECT kategori, konu, durum, COUNT(*) FROM bilgi_tabani GROUP BY 1,2,3"); rows_ = cur.fetchall()
         out = {}
-        for kat, konu, durum, n in cur.fetchall():
+        cur.execute("SELECT JSON_UNQUOTE(JSON_EXTRACT(ek,'$.alan')), COUNT(*) FROM bilgi_tabani WHERE durum='bekliyor' GROUP BY 1")
+        out["_alan"] = {r[0] or "-": r[1] for r in cur.fetchall()}
+        for kat, konu, durum, n in rows_:
             g = out.setdefault(kat, {}).setdefault(konu or "-", {"bekliyor": 0, "onayli": 0, "duzeltildi": 0, "reddedildi": 0})
             g[durum] = n
         conn.close(); return out
 
     @app.get("/admin/kb/list")
-    def kb_list(kategori: str = "bilgi", konu: str | None = None, durum: str | None = None, q: str | None = None, limit: int = 500, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    def kb_list(kategori: str = "bilgi", konu: str | None = None, durum: str | None = None, q: str | None = None, limit: int = 500, alan: str | None = None, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
         check_key(authorization, wx_session)
         conn = _db(); cur = conn.cursor()
         sql = "SELECT id,kategori,konu,metin,ek,destek,ornekler,celiski,durum,nihai FROM bilgi_tabani WHERE kategori=%s"; args = [kategori]
@@ -273,6 +275,7 @@ def register(app, check_key, _db, api_key_getter, model_getter, prices, page_gua
         if konu == "-": sql += " AND konu IS NULL"
         if durum: sql += " AND durum=%s"; args.append(durum)
         if q: sql += " AND (metin LIKE %s OR nihai LIKE %s)"; args += [f"%{q}%", f"%{q}%"]
+        if alan in ("kalici_makyaj", "klinik"): sql += " AND JSON_UNQUOTE(JSON_EXTRACT(ek,'$.alan'))=%s"; args.append(alan)
         sql += " ORDER BY (JSON_EXTRACT(ek,'$.soru') IS NOT NULL) DESC, (celiski IS NOT NULL) DESC, destek DESC, id LIMIT %s"; args.append(limit)
         cur.execute(sql, args)
         rows = [{"id": r[0], "kategori": r[1], "konu": r[2], "metin": r[3], "ek": json.loads(r[4]) if r[4] else {}, "destek": r[5],

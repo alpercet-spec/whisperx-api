@@ -66,6 +66,7 @@
     <div class="tabs" id="kats"></div>
     <div class="tabs" id="konular" style="margin-top:8px"></div>
     <div class="row" style="margin-top:10px">
+      <select id="alan" onchange="load()"><option value="">Tüm alanlar</option><option value="kalici_makyaj">Kalıcı makyaj</option><option value="klinik">Klinik işlemleri</option></select>
       <select id="durum" onchange="load()"><option value="">Tümü</option><option value="bekliyor" selected>Bekleyenler</option><option value="onayli">Onaylı</option><option value="duzeltildi">Düzeltilmiş</option><option value="reddedildi">Reddedilen</option></select>
       <input type="text" id="q" placeholder="ara…" onkeydown="if(event.key==='Enter')load()">
       <button class="sec sm" onclick="load()">Yenile</button>
@@ -89,7 +90,7 @@ async function api(u,opt){const r=await fetch(u,opt);if(r.status===401){location
 
 async function loadOzet(){
   ozet=await api('/admin/kb/ozet');
-  $('#kats').innerHTML=Object.entries(KATS).map(([k,v])=>{const g=ozet[k]||{};let b=0,t=0;for(const c of Object.values(g)){b+=c.bekliyor||0;t+=Object.values(c).reduce((a,x)=>a+x,0)}
+  const al=ozet._alan||{};$('#prog').textContent=$('#prog').textContent||`bekleyen: kalıcı makyaj ${al.kalici_makyaj||0} · klinik ${al.klinik||0}`;$('#kats').innerHTML=Object.entries(KATS).map(([k,v])=>{const g=ozet[k]||{};let b=0,t=0;for(const c of Object.values(g)){b+=c.bekliyor||0;t+=Object.values(c).reduce((a,x)=>a+x,0)}
     return `<button class="tab ${k===kat?'active':''}" onclick="setKat('${k}')">${v}<span class="n">${b}/${t}</span></button>`}).join('');
   const g=ozet[kat]||{}; const ks=Object.keys(g);
   $('#konular').innerHTML=ks.length>1?`<button class="tab ${konu===''?'active':''}" onclick="setKonu('')">tüm konular</button>`+ks.map(k=>`<button class="tab ${k===konu?'active':''}" onclick="setKonu('${k}')">${k}<span class="n">${g[k].bekliyor||0}</span></button>`).join(''):'';
@@ -97,7 +98,7 @@ async function loadOzet(){
 function setKat(k){kat=k;konu='';loadOzet();load()} function setKonu(k){konu=k;loadOzet();load()}
 
 async function load(){
-  const p=new URLSearchParams({kategori:kat});if(konu)p.set('konu',konu);const d=$('#durum').value;if(d)p.set('durum',d);const q=$('#q').value.trim();if(q)p.set('q',q);
+  const p=new URLSearchParams({kategori:kat});const al=$('#alan').value;if(al)p.set('alan',al);if(konu)p.set('konu',konu);const d=$('#durum').value;if(d)p.set('durum',d);const q=$('#q').value.trim();if(q)p.set('q',q);
   items=await api('/admin/kb/list?'+p); render();
 }
 function render(){
@@ -110,6 +111,7 @@ function render(){
     if(ek.varyantlar?.length)body+=`<div class="var">${esc(ek.varyantlar.slice(0,6).join(' | '))}</div>`;
     if(ek.amac)body+=`<div class="var">amaç: ${esc(ek.amac)}</div>`;
     if(ek.grup)body+=`<div class="var">grup: ${esc(ek.grup)}</div>`;
+    if(ek.alan&&it.durum==='bekliyor')body+=`<div class="var">alan: ${ek.alan==='kalici_makyaj'?'Kalıcı makyaj':'Klinik'}</div>`;
     if(ek.soru)body+=`<div class="soru">❓ ${esc(ek.soru)}</div>`;
     if(it.celiski)body+=`<div class="cel">⚠ ${esc(it.celiski)}</div>`;
     body+=`<div class="meta"><span class="badge">${it.durum}</span> · ${it.destek} görüşme · ${it.konu?esc(it.konu)+' · ':''}örnek: ${(it.ornekler||[]).slice(0,4).map((d,i)=>`<a onclick="showDokum('${d}')">#${i+1}</a>`).join('')}</div>`;
