@@ -624,3 +624,11 @@ def bilgi_ozet(authorization: str | None = Header(None), wx_session: str | None 
     cur.execute("SELECT temsilci, COUNT(*), ROUND(AVG(genel_puan),1) FROM gorusme_ozet GROUP BY temsilci ORDER BY 2 DESC"); out["temsilci"] = [list(r) for r in cur.fetchall()]
     cur.execute("SELECT etiket, COUNT(*) FROM gorusme_ozet GROUP BY etiket"); out["etiket"] = dict(cur.fetchall())
     conn.close(); return out
+
+
+# ---------------- Bilgi tabanı 2. katman (kb.py) ----------------
+import kb as _kb
+def _page_guard(wx_session):
+    if not PANEL_PASS or not session_ok(wx_session): return LOGIN_HTML.replace("__ERR__", "")
+    return None
+_kb.register(app, check_key, _db, lambda: ANTHROPIC_API_KEY, lambda: ANALYZE_MODEL, (IN_PRICE, OUT_PRICE), _page_guard)
