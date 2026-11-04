@@ -429,7 +429,7 @@ def daily_status(authorization: str | None = Header(None), wx_session: str | Non
 
 # ---------------- Toplu analiz (tablo üzerinden) ----------------
 def _analyze_batch_worker(limit, where, tier=2):
-    ANALYZE_STATE.update(durum="calisiyor", tier=tier, secilen=0, yapilan=0, hata=0, son_hata=None, input_tokens=0, output_tokens=0, tahmini_usd=0.0)
+    ANALYZE_STATE.update(durum="calisiyor", tier=tier, secilen=0, yapilan=0, hata=0, son_hata=None, input_tokens=0, output_tokens=0, tahmini_usd=0.0, baslangic=time.time(), sure_sn=0)
     ip, op = (IN_PRICE_T1, OUT_PRICE_T1) if tier == 1 else (IN_PRICE, OUT_PRICE)
     try:
         conn = _db(); cur = conn.cursor()
@@ -451,7 +451,7 @@ def _analyze_batch_worker(limit, where, tier=2):
                     k = out.get("kalite", {}) if isinstance(out, dict) else {}
                     cur.execute("UPDATE kayit_dokumleri SET analiz=%s, genel_puan=%s, temsilci_sp=%s, sonuc=%s WHERE drive_id=%s",
                                 (json.dumps(out, ensure_ascii=False), k.get("genel_puan"), out.get("temsilci_speaker"), (out.get("sonuc") or None), drive_id))
-                conn.commit(); ANALYZE_STATE["yapilan"] += 1
+                conn.commit(); ANALYZE_STATE["yapilan"] += 1; ANALYZE_STATE["sure_sn"] = round(time.time() - ANALYZE_STATE["baslangic"])
                 ANALYZE_STATE["input_tokens"] += usage.get("input_tokens", 0); ANALYZE_STATE["output_tokens"] += usage.get("output_tokens", 0)
                 ANALYZE_STATE["tahmini_usd"] = round(ANALYZE_STATE["input_tokens"] / 1e6 * ip + ANALYZE_STATE["output_tokens"] / 1e6 * op, 3)
             except Exception as e:
@@ -461,11 +461,12 @@ def _analyze_batch_worker(limit, where, tier=2):
         ANALYZE_STATE.update(durum="hata", son_hata=str(e)[:500])
 
 @app.post("/admin/analyze_batch")
-def analyze_batch(limit: int = 30, since: str | None = None, tier: int = 2, only_candidates: bool = False, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+def analyze_batch(limit: int = 30, since: str | None = None, tier: int = 2, only_candidates: bool = False, yon: str | None = None, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
     check_key(authorization, wx_session)
     if not ANTHROPIC_API_KEY: raise HTTPException(500, "ANTHROPIC_API_KEY ayarlanmadı")
     if ANALYZE_STATE["durum"] == "calisiyor": return ANALYZE_STATE
     where = f"AND kayit_tarihi >= '{since}'" if since and _re.fullmatch(r"\d{4}-\d{2}-\d{2}", since) else ""
+    if yon in ("gelen", "giden"): where += f" AND yon='{yon}'"
     if tier == 2 and only_candidates: where += " AND aday IN ('iyi','kotu')"
     _th.Thread(target=_analyze_batch_worker, args=(limit, where, tier), daemon=True).start()
     return {"baslatildi": True, "limit": limit, "tier": tier}
