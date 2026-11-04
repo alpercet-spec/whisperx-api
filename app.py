@@ -495,3 +495,109 @@ def analyze_reset(only_broken: bool = True, authorization: str | None = Header(N
         cur.execute("UPDATE kayit_dokumleri SET analiz=NULL, genel_puan=NULL, temsilci_sp=NULL, sonuc=NULL WHERE analiz IS NOT NULL")
     n = cur.rowcount; conn.commit(); conn.close()
     return {"sifirlanan": n}
+
+
+# ---------------- Çıkarım tabloları: analiz JSON -> yapısal satırlar ----------------
+EXTRACT_DDL = [
+"""CREATE TABLE IF NOT EXISTS gorusme_ozet (
+  drive_id VARCHAR(64) PRIMARY KEY, kayit_tarihi DATE, yon VARCHAR(8), dahili VARCHAR(32), temsilci VARCHAR(64),
+  gorusme_turu VARCHAR(48), sonuc VARCHAR(48), genel_puan TINYINT, etiket VARCHAR(16), kirmizi_bayrak TEXT, kacirilan_firsat TEXT,
+  p_karsilama TINYINT, p_ihtiyac TINYINT, p_sorular TINYINT, p_bilgi TINYINT, p_yonlendirme TINYINT, p_nezaket TINYINT, p_kapanis TINYINT,
+  ozet TEXT, INDEX(kayit_tarihi), INDEX(temsilci), INDEX(gorusme_turu), INDEX(etiket)) CHARACTER SET utf8mb4""",
+"""CREATE TABLE IF NOT EXISTS bilgi_adaylari (
+  id INT AUTO_INCREMENT PRIMARY KEY, drive_id VARCHAR(64), kayit_tarihi DATE, temsilci VARCHAR(64), konu VARCHAR(32),
+  bilgi VARCHAR(500), kaynak_cumle VARCHAR(500), guven VARCHAR(8), INDEX(drive_id), INDEX(konu), INDEX(guven)) CHARACTER SET utf8mb4""",
+"""CREATE TABLE IF NOT EXISTS kural_adaylari (
+  id INT AUTO_INCREMENT PRIMARY KEY, drive_id VARCHAR(64), kayit_tarihi DATE, temsilci VARCHAR(64), kural VARCHAR(500), INDEX(drive_id)) CHARACTER SET utf8mb4""",
+"""CREATE TABLE IF NOT EXISTS hizmet_eslestirme (
+  id INT AUTO_INCREMENT PRIMARY KEY, drive_id VARCHAR(64), kayit_tarihi DATE, musteri_ifadesi VARCHAR(255), temsilci_adlandirmasi VARCHAR(255),
+  normalize_ad VARCHAR(48), nitelik VARCHAR(32), bolge_miktar VARCHAR(64), baglam VARCHAR(32), fiyat_soruldu TINYINT, INDEX(normalize_ad), INDEX(drive_id)) CHARACTER SET utf8mb4""",
+"""CREATE TABLE IF NOT EXISTS soru_cevap (
+  id INT AUTO_INCREMENT PRIMARY KEY, drive_id VARCHAR(64), kayit_tarihi DATE, gorusme_turu VARCHAR(48), musteri_sorusu VARCHAR(500), temsilci_cevabi VARCHAR(1000), bilgi_icerir TINYINT, INDEX(drive_id)) CHARACTER SET utf8mb4""",
+"""CREATE TABLE IF NOT EXISTS kaliplar (
+  id INT AUTO_INCREMENT PRIMARY KEY, drive_id VARCHAR(64), temsilci VARCHAR(64), tur VARCHAR(24), cumle VARCHAR(500), INDEX(tur), INDEX(temsilci), INDEX(drive_id)) CHARACTER SET utf8mb4""",
+"""CREATE TABLE IF NOT EXISTS standart_sorular (
+  id INT AUTO_INCREMENT PRIMARY KEY, drive_id VARCHAR(64), temsilci VARCHAR(64), soru VARCHAR(300), INDEX(drive_id)) CHARACTER SET utf8mb4""",
+]
+EXTRACT_STATE = {"durum": "bekliyor", "islenen": 0, "hata": 0}
+
+def _s(v, n):  # güvenli kısaltma
+    return (str(v)[:n] if v is not None else None)
+
+def extract_rows(cur, drive_id, tarih, yon, dahili, a):
+    tem = _s(a.get("temsilci_adi"), 64)
+    for t in ("gorusme_ozet", "bilgi_adaylari", "kural_adaylari", "hizmet_eslestirme", "soru_cevap", "kaliplar", "standart_sorular"):
+        cur.execute(f"DELETE FROM {t} WHERE drive_id=%s", (drive_id,))
+    k = a.get("kalite") or {}; p = k.get("puanlar") or {}; e = a.get("egitim_ornegi") or {}
+    cur.execute("""INSERT INTO gorusme_ozet VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+        (drive_id, tarih, yon, dahili, tem, _s(a.get("gorusme_turu"), 48), _s(a.get("sonuc"), 48), k.get("genel_puan"), _s(e.get("etiket"), 16),
+         _s(k.get("kirmizi_bayrak"), 2000), _s(k.get("kacirilan_firsat"), 2000),
+         p.get("karsilama_tanitim"), p.get("ihtiyaci_anlama"), p.get("standart_sorular"), p.get("bilgi_dogrulugu_netligi"),
+         p.get("randevuya_yonlendirme"), p.get("nezaket_ton"), p.get("kapanis_teyit"), _s(a.get("ozet"), 2000)))
+    for b in a.get("olgusal_bilgiler") or []:
+        if isinstance(b, dict) and b.get("bilgi"):
+            cur.execute("INSERT INTO bilgi_adaylari (drive_id,kayit_tarihi,temsilci,konu,bilgi,kaynak_cumle,guven) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                        (drive_id, tarih, tem, _s(b.get("konu"), 32), _s(b.get("bilgi"), 500), _s(b.get("kaynak_cumle"), 500), _s(b.get("guven"), 8)))
+    for r in a.get("kurallar_ve_politikalar") or []:
+        if isinstance(r, str) and r.strip():
+            cur.execute("INSERT INTO kural_adaylari (drive_id,kayit_tarihi,temsilci,kural) VALUES (%s,%s,%s,%s)", (drive_id, tarih, tem, _s(r, 500)))
+    for h in a.get("sorulan_hizmetler") or []:
+        if isinstance(h, dict):
+            n = h.get("nitelikler") or {}
+            cur.execute("INSERT INTO hizmet_eslestirme (drive_id,kayit_tarihi,musteri_ifadesi,temsilci_adlandirmasi,normalize_ad,nitelik,bolge_miktar,baglam,fiyat_soruldu) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (drive_id, tarih, _s(h.get("musteri_ifadesi"), 255), _s(h.get("temsilci_adlandirmasi"), 255), _s(h.get("normalize_ad"), 48),
+                         _s(n.get("ilk_mi_yenileme_mi") if isinstance(n, dict) else None, 32), _s(n.get("bolge_miktar") if isinstance(n, dict) else None, 64),
+                         _s(h.get("baglam"), 32), 1 if h.get("fiyat_soruldu") else 0))
+    for q in a.get("soru_cevap") or []:
+        if isinstance(q, dict) and q.get("musteri_sorusu"):
+            cur.execute("INSERT INTO soru_cevap (drive_id,kayit_tarihi,gorusme_turu,musteri_sorusu,temsilci_cevabi,bilgi_icerir) VALUES (%s,%s,%s,%s,%s,%s)",
+                        (drive_id, tarih, _s(a.get("gorusme_turu"), 48), _s(q.get("musteri_sorusu"), 500), _s(q.get("temsilci_cevabi"), 1000), 1 if q.get("bilgi_icerir") else 0))
+    for c in a.get("temsilci_kaliplari") or []:
+        if isinstance(c, dict) and c.get("cumle"):
+            cur.execute("INSERT INTO kaliplar (drive_id,temsilci,tur,cumle) VALUES (%s,%s,%s,%s)", (drive_id, tem, _s(c.get("tur"), 24), _s(c.get("cumle"), 500)))
+    for q in a.get("standart_sorular") or []:
+        if isinstance(q, str) and q.strip():
+            cur.execute("INSERT INTO standart_sorular (drive_id,temsilci,soru) VALUES (%s,%s,%s)", (drive_id, tem, _s(q, 300)))
+
+def _extract_worker(only_new=True):
+    EXTRACT_STATE.update(durum="calisiyor", islenen=0, hata=0)
+    try:
+        conn = _db(); cur = conn.cursor()
+        for ddl in EXTRACT_DDL: cur.execute(ddl)
+        conn.commit()
+        q = "SELECT k.drive_id, k.kayit_tarihi, k.yon, k.dahili, k.analiz FROM kayit_dokumleri k WHERE k.analiz IS NOT NULL AND JSON_EXTRACT(k.analiz,'$.ham') IS NULL"
+        if only_new: q += " AND NOT EXISTS (SELECT 1 FROM gorusme_ozet g WHERE g.drive_id=k.drive_id)"
+        cur.execute(q); rows = cur.fetchall()
+        for drive_id, tarih, yon, dahili, aj in rows:
+            try:
+                extract_rows(cur, drive_id, tarih, yon, dahili, json.loads(aj)); conn.commit(); EXTRACT_STATE["islenen"] += 1
+            except Exception as e:
+                conn.rollback(); EXTRACT_STATE["hata"] += 1; EXTRACT_STATE["son_hata"] = str(e)[:300]
+        conn.close(); EXTRACT_STATE["durum"] = "tamam"
+    except Exception as e:
+        EXTRACT_STATE.update(durum="hata", son_hata=str(e)[:500])
+
+@app.post("/admin/extract")
+def extract(only_new: bool = True, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    check_key(authorization, wx_session)
+    if EXTRACT_STATE["durum"] == "calisiyor": return EXTRACT_STATE
+    _th.Thread(target=_extract_worker, args=(only_new,), daemon=True).start(); return {"baslatildi": True}
+
+@app.get("/admin/extract_status")
+def extract_status(authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    check_key(authorization, wx_session); return EXTRACT_STATE
+
+@app.get("/admin/bilgi_ozet")
+def bilgi_ozet(authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    check_key(authorization, wx_session)
+    conn = _db(); cur = conn.cursor(); out = {}
+    for t in ("gorusme_ozet", "bilgi_adaylari", "kural_adaylari", "hizmet_eslestirme", "soru_cevap", "kaliplar", "standart_sorular"):
+        cur.execute(f"SELECT COUNT(*) FROM {t}"); out[t] = cur.fetchone()[0]
+    cur.execute("SELECT konu, COUNT(*) FROM bilgi_adaylari GROUP BY konu ORDER BY 2 DESC"); out["bilgi_konu"] = dict(cur.fetchall())
+    cur.execute("SELECT normalize_ad, COUNT(*) FROM hizmet_eslestirme GROUP BY normalize_ad ORDER BY 2 DESC LIMIT 25"); out["hizmet"] = dict(cur.fetchall())
+    cur.execute("SELECT musteri_ifadesi, normalize_ad, COUNT(*) c FROM hizmet_eslestirme GROUP BY 1,2 ORDER BY c DESC LIMIT 25"); out["eslestirme_top"] = [list(r) for r in cur.fetchall()]
+    cur.execute("SELECT tur, cumle, COUNT(*) c FROM kaliplar GROUP BY 1,2 HAVING c>=2 ORDER BY c DESC LIMIT 25"); out["kalip_top"] = [list(r) for r in cur.fetchall()]
+    cur.execute("SELECT soru, COUNT(*) c FROM standart_sorular GROUP BY 1 HAVING c>=2 ORDER BY c DESC LIMIT 20"); out["soru_top"] = [list(r) for r in cur.fetchall()]
+    cur.execute("SELECT temsilci, COUNT(*), ROUND(AVG(genel_puan),1) FROM gorusme_ozet GROUP BY temsilci ORDER BY 2 DESC"); out["temsilci"] = [list(r) for r in cur.fetchall()]
+    cur.execute("SELECT etiket, COUNT(*) FROM gorusme_ozet GROUP BY etiket"); out["etiket"] = dict(cur.fetchall())
+    conn.close(); return out
