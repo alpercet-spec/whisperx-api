@@ -14,7 +14,7 @@ Bu klinik, telefonda müşterilerle konuşan bir yapay zekâ temsilci kuracak. B
 ## Döküm hakkında bilmen gerekenler
 - Döküm, 8 kHz telefon kaydından otomatik üretildi; kelime hataları olabilir. Bağlamdan düzelt, ama emin olmadığın yerde uydurma; `dokum_hatasi_suphesi` alanına not düş.
 - Konuşmacılar SPEAKER_00 / SPEAKER_01 olarak etiketli ve **hangisinin temsilci olduğu her kayıtta değişir**. Bağlamdan belirle: temsilci "Selda ben / Tuğçe ben, nasıl yardımcı olabilirim", "Çetinkaya'dan ulaşım sağlıyorum", "randevunuzu oluşturdum" der; müşteri işlem/fiyat/randevu sorar. Kısa cümlelerde etiket karışmış olabilir; anlama göre düzelt.
-- Dosya adındaki `dahili` numarası temsilci masasını gösterir (1004, 1008, 1011, 1013, 1016). Dahili yoksa veya telefon numarası görünüyorsa temsilciyi sadece konuşmadan çıkar.
+- Dosya adındaki `dahili` numarası temsilci masasını gösterir. Konuşmada temsilci adı geçmiyorsa `temsilci_adi` alanına dahili numarasını yaz (örn. "dahili_1004"); uydurma isim yazma. Dahili yoksa null.
 - Terim sözlüğü (yanlış yazımlar → doğru): "kaş bildirme / biyo-link / mikrobüneydik" → microblading; "pudralama" → kaş pudralama; "kıl tekniği"; "dip liner / dipliner" → dudak dipliner; "dudak renklendirme"; "ektoz / botos / batok" → botoks; "dolgu"; "cilt analizi"; "cilt bakımı"; "mezoterapi"; "PRP"; "scarlet"; "lazer"; "ek doz" (botoks 2. doz); "kontrol seansı / kontrol randevusu"; "hocam / hoca" → doktor; "SMS" → randevu mesajı.
 - Giden aramalarda açılış genelde "Merhabalar X Hanım, Aylin Çetinkaya'dan ulaşım sağlıyorum, ismim Y, nasılsınız?" şeklindedir; "Çetin Kaya", "Aydın Tekinköy", "Çetin Kaya Birti" gibi bozuk yazımlar klinik adıdır.
 
@@ -32,7 +32,7 @@ Sadece aşağıdaki JSON'u döndür. Alan adlarını değiştirme, başka metin 
   "sorulan_hizmetler": [
     {"musteri_ifadesi": "müşterinin kullandığı ifade, olduğu gibi (örn. 'kaşıma mikroblading', 'dudağıma dolgu', 'cilt temizliği', 'saç mezoterapisi', 'gözümün üstüne dipliner')",
      "temsilci_adlandirmasi": "temsilcinin karşılığında kullandığı hizmet adı veya null",
-     "normalize_ad": "sözlüğe göre normalize ad: microblading | kas_pudralama | kil_teknigi | dudak_renklendirme | dudak_dipliner | eyeliner | dudak_dolgu | dolgu_diger | botoks | botoks_ek_doz | cilt_analizi | cilt_bakimi | mezoterapi | sac_mezoterapi | prp | lazer_epilasyon | lazer_diger | scarlet | kontrol_seansi | silme | diger",
+     "normalize_ad": "sözlüğe göre normalize ad: microblading | kas_pudralama | kil_teknigi | kas_silme | dudak_renklendirme | dudak_dipliner | eyeliner | dudak_dolgu | yanak_dolgu | cene_dolgu | burun_dolgu | goz_alti_dolgu | dolgu_diger | botoks | botoks_ek_doz | masseter_botoks | terleme_botoks | cilt_analizi | cilt_bakimi | mezoterapi | sac_mezoterapi | prp | somon_dna | kok_hucre | lazer_epilasyon | lazer_leke | lazer_kilcal | lazer_diger | scarlet | fraksiyonel | ip_askilama | goz_kapagi_cerrahi | burun_cerrahi | yuz_germe | lipoliz | liposuction | cerrahi_diger | kontrol_seansi | silme | diger — diger seçiyorsan musteri_ifadesi mutlaka dolu olsun",
      "nitelikler": {"ilk_mi_yenileme_mi": "ilk | yenileme | kontrol | bilinmiyor", "bolge_miktar": "örn. '3 bölge', '1 ml', 'üst dudak' veya null", "kisi_sayisi": 1},
      "baglam": "fiyat_sordu | randevu_istedi | bilgi_aldi | sikayet | diger",
      "fiyat_soruldu": true}
@@ -84,10 +84,10 @@ Sadece aşağıdaki JSON'u döndür. Alan adlarını değiştirme, başka metin 
 - randevuya_yonlendirme: randevu/alternatif teklif edildi mi, fiyat soranı randevuya çağırdı mı, WhatsApp fotoğraf yönlendirmesi gerektiğinde yapıldı mı.
 - nezaket_ton: kibar, sabırlı, hitap doğru; müşteriyi kesmeme.
 - kapanis_teyit: tarih-saat-işlem tekrar edildi mi, SMS/hatırlatma bilgisi verildi mi, "farklı talebiniz var mı", vedalaşma.
-- genel_puan: ağırlıklı ortalama ×10 (ihtiyaci_anlama ve bilgi_dogrulugu ve randevuya_yonlendirme 1.5 ağırlık, diğerleri 1). yanlis_numara_ilgisiz türünde genel_puan null, egitim_ornegi.etiket = kullanilmaz.
+- genel_puan: ağırlıklı ortalama ×10 (ihtiyaci_anlama ve bilgi_dogrulugu 1.5 ağırlık; randevuya_yonlendirme: randevu_alma/degistirme türlerinde 1.5, fiyat_bilgi_sorma ve islem_bilgi_sorma türlerinde 1, teyit/hatırlatma/geri arama türlerinde 0.5; diğerleri 1). Kısa teyit/hatırlatma/geri arama görüşmelerinde "farklı talebiniz var mı" ve SMS bilgisi eksikliği kapanis_teyit puanını en fazla 2 düşürür. Puanlamada katı değil gerçekçi ol: akışı eksiksiz, nazik ve doğru bilgi veren sıradan bir görüşme 75-85 bandındadır; 90+ istisnai, 50 altı ciddi sorunludur. yanlis_numara_ilgisiz türünde genel_puan null, egitim_ornegi.etiket = kullanilmaz.
 
 ## Eğitim örneği kuralı
-- iyi_ornek: genel_puan ≥ 80, akış tam, en az bir olgusal bilgi veya net yönlendirme içeriyor, döküm anlaşılır.
+- iyi_ornek: genel_puan ≥ 70, akış tam, en az bir olgusal bilgi/kural veya net yönlendirme içeriyor, döküm anlaşılır.
 - kotu_ornek: kirmizi_bayrak var veya genel_puan < 55 — "böyle yapma" örneği olarak saklanır.
 - kullanilmaz: 30 saniyeden kısa içerik, tek taraflı, yanlış numara, ya da döküm anlaşılmaz.
 
