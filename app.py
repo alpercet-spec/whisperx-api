@@ -252,3 +252,82 @@ def analyze(
         return json.loads(text)
     except json.JSONDecodeError:
         return {"ham": text}
+
+
+# ---------------- Arşiv içe aktarma (Ortak Drive -> MySQL) ----------------
+import io as _io, tarfile, threading as _th
+IMPORT_STATE = {"durum": "bekliyor", "okunan": 0, "yazilan": 0, "hata": None}
+
+DDL = """CREATE TABLE IF NOT EXISTS kayit_dokumleri (
+  id INT AUTO_INCREMENT PRIMARY KEY, drive_id VARCHAR(64) NOT NULL UNIQUE, dosya_adi VARCHAR(255) NOT NULL,
+  klasor_yolu VARCHAR(64), kayit_tarihi DATE, yon ENUM('gelen','giden') NULL, telefon VARCHAR(20), dahili VARCHAR(10),
+  boyut_kb INT, durum ENUM('bekliyor','isleniyor','tamam','hata','atlandi') DEFAULT 'bekliyor', hata TEXT,
+  dokum MEDIUMTEXT, segmentler JSON, analiz JSON, genel_puan TINYINT, temsilci_sp VARCHAR(12), sonuc VARCHAR(64), islem_sn INT,
+  olusturma TIMESTAMP DEFAULT CURRENT_TIMESTAMP, guncelleme TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX (durum), INDEX (kayit_tarihi), INDEX (dahili), INDEX (telefon)
+) CHARACTER SET utf8mb4"""
+
+UPSERT = """INSERT INTO kayit_dokumleri (drive_id,dosya_adi,klasor_yolu,kayit_tarihi,yon,telefon,dahili,boyut_kb,durum,hata,dokum,segmentler,islem_sn)
+VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+ON DUPLICATE KEY UPDATE durum=VALUES(durum),hata=VALUES(hata),dokum=VALUES(dokum),segmentler=VALUES(segmentler),islem_sn=VALUES(islem_sn)"""
+
+def _db():
+    import pymysql
+    return pymysql.connect(host=os.environ["DB_HOST"], user=os.environ["DB_USER"], password=os.environ["DB_PASS"],
+                           database=os.environ["DB_NAME"], charset="utf8mb4", autocommit=False)
+
+def _drive_download(name):
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseDownload
+    info = json.loads(os.environ["GOOGLE_SA_JSON"])
+    c = service_account.Credentials.from_service_account_info(info, scopes=["https://www.googleapis.com/auth/drive.readonly"])
+    d = build("drive", "v3", credentials=c, cache_discovery=False)
+    r = d.files().list(q=f"name='{name}' and trashed=false", fields="files(id,size)", supportsAllDrives=True,
+                       includeItemsFromAllDrives=True, corpora="allDrives").execute()["files"]
+    if not r: raise RuntimeError(f"Drive'da bulunamadı: {name}")
+    buf = _io.BytesIO(); dl = MediaIoBaseDownload(buf, d.files().get_media(fileId=r[0]["id"], supportsAllDrives=True))
+    done = False
+    while not done: _, done = dl.next_chunk()
+    buf.seek(0); return buf
+
+def _import_worker(name):
+    try:
+        IMPORT_STATE.update(durum="indiriliyor", okunan=0, yazilan=0, hata=None)
+        buf = _drive_download(name)
+        IMPORT_STATE["durum"] = "yaziliyor"
+        conn = _db(); cur = conn.cursor(); cur.execute(DDL); conn.commit()
+        batch = []
+        with tarfile.open(fileobj=buf, mode="r:gz") as tar:
+            for m in tar:
+                if not (m.isfile() and m.name.endswith(".json") and "out/" in m.name): continue
+                j = json.loads(tar.extractfile(m).read().decode("utf-8")); IMPORT_STATE["okunan"] += 1
+                batch.append((j["drive_id"], j["dosya_adi"], j.get("klasor_yolu"), j.get("kayit_tarihi"), j.get("yon"), j.get("telefon"),
+                              j.get("dahili") or None, j.get("boyut_kb"), j["durum"], j.get("hata"), j.get("dokum"),
+                              json.dumps(j.get("segmentler"), ensure_ascii=False) if j.get("segmentler") is not None else None, j.get("islem_sn")))
+                if len(batch) >= 500:
+                    cur.executemany(UPSERT, batch); conn.commit(); IMPORT_STATE["yazilan"] += len(batch); batch = []
+        if batch: cur.executemany(UPSERT, batch); conn.commit(); IMPORT_STATE["yazilan"] += len(batch)
+        cur.execute("SELECT durum, COUNT(*) FROM kayit_dokumleri GROUP BY durum"); IMPORT_STATE["tablo"] = dict(cur.fetchall())
+        conn.close(); IMPORT_STATE["durum"] = "tamam"
+    except Exception as e:
+        IMPORT_STATE.update(durum="hata", hata=str(e)[:500])
+
+@app.post("/admin/import_drive")
+def import_drive(name: str = "results.tgz", authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    check_key(authorization, wx_session)
+    if IMPORT_STATE["durum"] in ("indiriliyor", "yaziliyor"): return IMPORT_STATE
+    _th.Thread(target=_import_worker, args=(name,), daemon=True).start()
+    return {"baslatildi": True}
+
+@app.get("/admin/import_status")
+def import_status(authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    check_key(authorization, wx_session); return IMPORT_STATE
+
+@app.get("/admin/db_stats")
+def db_stats(authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    check_key(authorization, wx_session)
+    conn = _db(); cur = conn.cursor()
+    cur.execute("SELECT durum, COUNT(*) FROM kayit_dokumleri GROUP BY durum"); r = dict(cur.fetchall())
+    cur.execute("SELECT dahili, COUNT(*) FROM kayit_dokumleri WHERE durum='tamam' GROUP BY dahili"); r["dahili"] = dict(cur.fetchall())
+    conn.close(); return r
