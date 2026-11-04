@@ -260,7 +260,7 @@ IMPORT_STATE = {"durum": "bekliyor", "okunan": 0, "yazilan": 0, "hata": None}
 
 DDL = """CREATE TABLE IF NOT EXISTS kayit_dokumleri (
   id INT AUTO_INCREMENT PRIMARY KEY, drive_id VARCHAR(64) NOT NULL UNIQUE, dosya_adi VARCHAR(255) NOT NULL,
-  klasor_yolu VARCHAR(64), kayit_tarihi DATE, yon ENUM('gelen','giden') NULL, telefon VARCHAR(20), dahili VARCHAR(10),
+  klasor_yolu VARCHAR(64), kayit_tarihi DATE, yon ENUM('gelen','giden') NULL, telefon VARCHAR(32), dahili VARCHAR(32),
   boyut_kb INT, durum ENUM('bekliyor','isleniyor','tamam','hata','atlandi') DEFAULT 'bekliyor', hata TEXT,
   dokum MEDIUMTEXT, segmentler JSON, analiz JSON, genel_puan TINYINT, temsilci_sp VARCHAR(12), sonuc VARCHAR(64), islem_sn INT,
   olusturma TIMESTAMP DEFAULT CURRENT_TIMESTAMP, guncelleme TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -297,13 +297,15 @@ def _import_worker(name):
         buf = _drive_download(name)
         IMPORT_STATE["durum"] = "yaziliyor"
         conn = _db(); cur = conn.cursor(); cur.execute(DDL); conn.commit()
+        cur.execute("ALTER TABLE kayit_dokumleri MODIFY telefon VARCHAR(32), MODIFY dahili VARCHAR(32), MODIFY klasor_yolu VARCHAR(64)"); conn.commit()
         batch = []
         with tarfile.open(fileobj=buf, mode="r:gz") as tar:
             for m in tar:
                 if not (m.isfile() and m.name.endswith(".json") and "out/" in m.name): continue
                 j = json.loads(tar.extractfile(m).read().decode("utf-8")); IMPORT_STATE["okunan"] += 1
-                batch.append((j["drive_id"], j["dosya_adi"], j.get("klasor_yolu"), j.get("kayit_tarihi"), j.get("yon"), j.get("telefon"),
-                              j.get("dahili") or None, j.get("boyut_kb"), j["durum"], j.get("hata"), j.get("dokum"),
+                tel = (j.get("telefon") or None); dah = (j.get("dahili") or None)
+                batch.append((j["drive_id"], j["dosya_adi"][:255], j.get("klasor_yolu"), j.get("kayit_tarihi"), j.get("yon"), tel[:32] if tel else None,
+                              dah[:32] if dah else None, j.get("boyut_kb"), j["durum"], j.get("hata"), j.get("dokum"),
                               json.dumps(j.get("segmentler"), ensure_ascii=False) if j.get("segmentler") is not None else None, j.get("islem_sn")))
                 if len(batch) >= 500:
                     cur.executemany(UPSERT, batch); conn.commit(); IMPORT_STATE["yazilan"] += len(batch); batch = []
