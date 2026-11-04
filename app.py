@@ -112,6 +112,33 @@ def health():
     return {"status": "ok", "model": MODEL_NAME}
 
 
+
+def transcribe_path(raw_path: str, language: str = DEFAULT_LANG, min_speakers=None, max_speakers=None):
+    """Ses dosyasını (herhangi format) ön işleyip konuşmacı ayrımlı segmentlere çevirir."""
+    path = raw_path + ".wav"
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", raw_path, "-ac", "1", "-ar", "16000",
+             "-af", "highpass=f=200,lowpass=f=3400,loudnorm=I=-16:TP=-1.5:LRA=11", path],
+            check=True,
+        )
+        with lock:
+            audio = whisperx.load_audio(path)
+            result = asr_model.transcribe(audio, language=language, batch_size=8)
+            if language == DEFAULT_LANG:
+                am, meta = align_model, align_meta
+            else:
+                am, meta = whisperx.load_align_model(language_code=language, device=DEVICE)
+            result = whisperx.align(result["segments"], am, meta, audio, DEVICE)
+            diar = diarize_model(audio, min_speakers=min_speakers, max_speakers=max_speakers)
+            result = whisperx.assign_word_speakers(diar, result)
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+    return [{"start": round(x["start"], 2), "end": round(x["end"], 2),
+             "speaker": x.get("speaker", "UNKNOWN"), "text": x["text"].strip()} for x in result["segments"]]
+
+
 @app.post("/transcribe")
 def transcribe(
     file: UploadFile = File(...),
@@ -126,41 +153,11 @@ def transcribe(
     with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename or "a.wav")[1]) as tmp:
         tmp.write(file.file.read())
         raw_path = tmp.name
-    path = raw_path + ".wav"
-
     try:
-        # Ön işleme: mono 16 kHz, telefon bandı filtresi, ses seviyesi normalizasyonu
-        subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error", "-i", raw_path, "-ac", "1", "-ar", "16000",
-             "-af", "highpass=f=200,lowpass=f=3400,loudnorm=I=-16:TP=-1.5:LRA=11", path],
-            check=True,
-        )
-        with lock:
-            audio = whisperx.load_audio(path)
-            result = asr_model.transcribe(audio, language=language, batch_size=8)
-
-            if language == DEFAULT_LANG:
-                am, meta = align_model, align_meta
-            else:
-                am, meta = whisperx.load_align_model(language_code=language, device=DEVICE)
-            result = whisperx.align(result["segments"], am, meta, audio, DEVICE)
-
-            diar = diarize_model(audio, min_speakers=min_speakers, max_speakers=max_speakers)
-            result = whisperx.assign_word_speakers(diar, result)
+        segments = transcribe_path(raw_path, language, min_speakers, max_speakers)
     finally:
-        for p in (raw_path, path):
-            if os.path.exists(p):
-                os.remove(p)
-
-    segments = [
-        {
-            "start": round(s["start"], 2),
-            "end": round(s["end"], 2),
-            "speaker": s.get("speaker", "UNKNOWN"),
-            "text": s["text"].strip(),
-        }
-        for s in result["segments"]
-    ]
+        if os.path.exists(raw_path):
+            os.remove(raw_path)
     dialogue = "\n".join(f"[{s['speaker']}] {s['text']}" for s in segments)
 
     return {
@@ -333,3 +330,116 @@ def db_stats(authorization: str | None = Header(None), wx_session: str | None = 
     cur.execute("SELECT durum, COUNT(*) FROM kayit_dokumleri GROUP BY durum"); r = dict(cur.fetchall())
     cur.execute("SELECT dahili, COUNT(*) FROM kayit_dokumleri WHERE durum='tamam' GROUP BY dahili"); r["dahili"] = dict(cur.fetchall())
     conn.close(); return r
+
+
+# ---------------- Gece görevi: Drive'daki yeni kayıtları işle ----------------
+import datetime as _dt, re as _re, zoneinfo as _zi
+
+DRIVE_ROOT = os.environ.get("DRIVE_ROOT", "1mhWZk0fHPT97qPORXIPukkGufWTyOR00")   # aylincetinkaya.bulutsantralim.com
+DAILY_HOUR = int(os.environ.get("DAILY_HOUR", "2"))
+DAILY_DAYS_BACK = int(os.environ.get("DAILY_DAYS_BACK", "3"))
+DAILY_MIN_KB = int(os.environ.get("DAILY_MIN_KB", "50"))
+TZ = _zi.ZoneInfo("Europe/Istanbul")
+DAILY_STATE = {"durum": "bekliyor", "son_calisma": None, "sonraki": None, "bulunan": 0, "yeni": 0, "islenen": 0, "atlanan": 0, "hata": 0, "son_hata": None, "simdiki": None}
+
+def _drive_service(scope="https://www.googleapis.com/auth/drive.readonly"):
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    info = json.loads(os.environ["GOOGLE_SA_JSON"])
+    c = service_account.Credentials.from_service_account_info(info, scopes=[scope])
+    return build("drive", "v3", credentials=c, cache_discovery=False)
+
+def _child(d, parent, name, folder=True):
+    mt = "=" if folder else "!="
+    q = f"'{parent}' in parents and name='{name}' and trashed=false and mimeType {mt} 'application/vnd.google-apps.folder'"
+    r = d.files().list(q=q, fields="files(id)", supportsAllDrives=True, includeItemsFromAllDrives=True).execute()["files"]
+    return r[0]["id"] if r else None
+
+def _list_files(d, parent):
+    q = f"'{parent}' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'"
+    out, token = [], None
+    while True:
+        r = d.files().list(q=q, fields="nextPageToken, files(id,name,size)", pageSize=1000, supportsAllDrives=True,
+                           includeItemsFromAllDrives=True, pageToken=token).execute()
+        out += r.get("files", []); token = r.get("nextPageToken")
+        if not token: return out
+
+def _parse_name(name):
+    parts = name.rsplit(".", 1)[0].split("_")
+    if len(parts) < 3: return None, None, None
+    a, b = parts[1], parts[2]
+    return ("giden", b, a) if len(a) <= 4 else ("gelen", a, b)
+
+def daily_job(days_back=None):
+    days_back = days_back or DAILY_DAYS_BACK
+    DAILY_STATE.update(durum="calisiyor", bulunan=0, yeni=0, islenen=0, atlanan=0, hata=0, son_hata=None, son_calisma=_dt.datetime.now(TZ).isoformat(timespec="minutes"))
+    try:
+        d = _drive_service()
+        from googleapiclient.http import MediaIoBaseDownload
+        conn = _db(); cur = conn.cursor(); cur.execute(DDL); conn.commit()
+        today = _dt.datetime.now(TZ).date()
+        for back in range(days_back):
+            day = today - _dt.timedelta(days=back)
+            y, m, g = f"{day.year}", f"{day.month:02d}", f"{day.day:02d}"
+            fy = _child(d, DRIVE_ROOT, y); fm = _child(d, fy, m) if fy else None
+            fg = None
+            if fm:
+                fg = _child(d, fm, g) or _child(d, fm, str(day.day))
+            if not fg: continue
+            files = [f for f in _list_files(d, fg) if _re.search(r"\.(mp3|wav|m4a|ogg)$", f["name"], _re.I)]
+            DAILY_STATE["bulunan"] += len(files)
+            if not files: continue
+            cur.execute("SELECT drive_id FROM kayit_dokumleri WHERE drive_id IN (%s)" % ",".join(["%s"] * len(files)), [f["id"] for f in files])
+            have = {r[0] for r in cur.fetchall()}
+            for f in files:
+                if f["id"] in have: continue
+                DAILY_STATE["yeni"] += 1; DAILY_STATE["simdiki"] = f["name"]
+                kb = int(f.get("size", 0)) // 1024
+                yon, tel, dah = _parse_name(f["name"])
+                base = (f["id"], f["name"][:255], f"{y}/{m}/{g}", day.isoformat(), yon, tel[:32] if tel else None, dah[:32] if dah else None, kb)
+                if kb < DAILY_MIN_KB:
+                    cur.execute(UPSERT, base + ("atlandi", None, None, None, None)); conn.commit(); DAILY_STATE["atlanan"] += 1; continue
+                raw = None; t0 = time.time()
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(f["name"])[1]) as tmp:
+                        raw = tmp.name
+                        dl = MediaIoBaseDownload(tmp, d.files().get_media(fileId=f["id"], supportsAllDrives=True))
+                        done = False
+                        while not done: _, done = dl.next_chunk()
+                    segs = transcribe_path(raw, DEFAULT_LANG, 2, 2)
+                    dok = "\n".join(f"[{s['speaker']}] {s['text']}" for s in segs)
+                    cur.execute(UPSERT, base + ("tamam", None, dok, json.dumps(segs, ensure_ascii=False), round(time.time() - t0)))
+                    DAILY_STATE["islenen"] += 1
+                except Exception as e:
+                    cur.execute(UPSERT, base + ("hata", str(e)[:2000], None, None, None)); DAILY_STATE["hata"] += 1; DAILY_STATE["son_hata"] = str(e)[:300]
+                finally:
+                    if raw and os.path.exists(raw): os.remove(raw)
+                conn.commit()
+        conn.close(); DAILY_STATE["durum"] = "tamam"
+    except Exception as e:
+        DAILY_STATE.update(durum="hata", son_hata=str(e)[:500])
+    DAILY_STATE["simdiki"] = None
+
+def _scheduler():
+    while True:
+        now = _dt.datetime.now(TZ)
+        nxt = now.replace(hour=DAILY_HOUR, minute=0, second=0, microsecond=0)
+        if nxt <= now: nxt += _dt.timedelta(days=1)
+        DAILY_STATE["sonraki"] = nxt.isoformat(timespec="minutes")
+        time.sleep((nxt - now).total_seconds())
+        if DAILY_STATE["durum"] != "calisiyor": daily_job()
+
+if os.environ.get("GOOGLE_SA_JSON") and os.environ.get("DB_HOST"):
+    _th.Thread(target=_scheduler, daemon=True).start()
+    print(f"Gece görevi aktif: her gün {DAILY_HOUR:02d}:00 (Europe/Istanbul), son {DAILY_DAYS_BACK} gün taranır.", flush=True)
+
+@app.post("/admin/run_daily")
+def run_daily(days_back: int = DAILY_DAYS_BACK, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    check_key(authorization, wx_session)
+    if DAILY_STATE["durum"] == "calisiyor": return DAILY_STATE
+    _th.Thread(target=daily_job, args=(days_back,), daemon=True).start()
+    return {"baslatildi": True, "days_back": days_back}
+
+@app.get("/admin/daily_status")
+def daily_status(authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    check_key(authorization, wx_session); return DAILY_STATE
