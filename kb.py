@@ -13,6 +13,7 @@ KB_DDL = """CREATE TABLE IF NOT EXISTS bilgi_tabani (
   olusturma TIMESTAMP DEFAULT CURRENT_TIMESTAMP, guncelleme TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX(kategori, konu, durum)) CHARACTER SET utf8mb4"""
 
+KB_STOP = {"flag": False}
 KB_STATE = {"durum": "bekliyor", "adim": None, "cagri": 0, "input_tokens": 0, "output_tokens": 0, "tahmini_usd": 0.0, "son_hata": None, "uretilen": {}}
 
 ORTAK = """Sen bir estetik/dermatoloji/kalıcı makyaj kliniğinin çağrı merkezi görüşmelerinden çıkarılmış ham adayları
@@ -152,10 +153,12 @@ def register(app, check_key, _db, api_key_getter, model_getter, prices, page_gua
         KB_STATE["uretilen"][f"{kategori}/{konu or '-'}"] = len(merged)
 
     def _build_worker(kategoriler, force):
+        KB_STOP["flag"] = False
         KB_STATE.update(durum="calisiyor", adim="hazırlık", cagri=0, input_tokens=0, output_tokens=0, tahmini_usd=0.0, son_hata=None, uretilen={}, baslangic=time.time())
         try:
             conn = _db(); cur = conn.cursor(); cur.execute(KB_DDL); conn.commit()
             for kat in kategoriler:
+                if KB_STOP["flag"]: break
                 cur.execute("DELETE FROM bilgi_tabani WHERE kategori=%s" + ("" if force else " AND durum='bekliyor'"), (kat,)); conn.commit()
                 groups = []  # (konu, items)
                 if kat == "bilgi":
@@ -180,7 +183,7 @@ def register(app, check_key, _db, api_key_getter, model_getter, prices, page_gua
                     cur.execute("SELECT CONCAT('S: ', musteri_sorusu, ' | C: ', COALESCE(temsilci_cevabi,'')), drive_id FROM soru_cevap WHERE bilgi_icerir=1 ORDER BY kayit_tarihi DESC LIMIT 4000")
                     groups.append((None, _items_from_rows(cur.fetchall())))
                 for konu, items in groups:
-                    if not items: continue
+                    if not items or KB_STOP["flag"]: continue
                     try:
                         merged = _consolidate(kat, konu, items)
                         _save(cur, kat, konu, merged); conn.commit()
@@ -200,6 +203,51 @@ def register(app, check_key, _db, api_key_getter, model_getter, prices, page_gua
         kats = [k.strip() for k in kategoriler.split(",") if k.strip() in PROMPTS]
         threading.Thread(target=_build_worker, args=(kats, force), daemon=True).start()
         return {"baslatildi": True, "kategoriler": kats, "force": force}
+
+    @app.post("/admin/kb/stop")
+    def kb_stop(authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+        check_key(authorization, wx_session); KB_STOP["flag"] = True; return {"durduruluyor": True, "not": "çalışan grup bitince durur"}
+
+    @app.get("/admin/kb/dump")
+    def kb_dump(kategori: str, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+        """Aday satırları tekilleştirilmiş (metin, n, ids, ek) listesi olarak verir; dışarıda birleştirme için."""
+        check_key(authorization, wx_session)
+        conn = _db(); cur = conn.cursor(); out = {}
+        if kategori == "bilgi":
+            cur.execute("SELECT konu FROM bilgi_adaylari GROUP BY konu HAVING COUNT(*)>=3")
+            for (konu,) in cur.fetchall():
+                cur.execute("SELECT bilgi, drive_id FROM bilgi_adaylari WHERE konu=%s AND (guven IS NULL OR guven<>'dusuk')", (konu,)); out[konu] = _items_from_rows(cur.fetchall())
+        elif kategori == "kural":
+            cur.execute("SELECT kural, drive_id FROM kural_adaylari"); out["-"] = _items_from_rows(cur.fetchall())
+        elif kategori == "soru":
+            cur.execute("SELECT soru, drive_id FROM standart_sorular"); out["-"] = _items_from_rows(cur.fetchall())
+        elif kategori == "kalip":
+            cur.execute("SELECT tur FROM kaliplar GROUP BY tur HAVING COUNT(*)>=5")
+            for (tur,) in cur.fetchall():
+                cur.execute("SELECT cumle, drive_id FROM kaliplar WHERE tur=%s", (tur,)); out[tur] = _items_from_rows(cur.fetchall())
+        elif kategori == "hizmet":
+            cur.execute("SELECT musteri_ifadesi, drive_id, normalize_ad FROM hizmet_eslestirme WHERE musteri_ifadesi IS NOT NULL"); out["-"] = _items_from_rows(cur.fetchall(), lambda r: {"norm": r[2]})
+        elif kategori == "soru_cevap":
+            cur.execute("SELECT CONCAT('S: ', musteri_sorusu, ' | C: ', COALESCE(temsilci_cevabi,'')), drive_id FROM soru_cevap WHERE bilgi_icerir=1 ORDER BY kayit_tarihi DESC LIMIT 4000"); out["-"] = _items_from_rows(cur.fetchall())
+        else: raise HTTPException(400, "geçersiz kategori")
+        conn.close(); return out
+
+    class KbImport(BaseModel):
+        kategori: str
+        konu: str | None = None
+        satirlar: list[dict]   # {"metin","n","ids","ek":{...,"celiski"}}
+        sil: bool = True       # aynı kategori/konu 'bekliyor' satırlarını önce sil
+
+    @app.post("/admin/kb/import")
+    def kb_import(body: KbImport, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+        check_key(authorization, wx_session)
+        if body.kategori not in PROMPTS: raise HTTPException(400, "geçersiz kategori")
+        conn = _db(); cur = conn.cursor(); cur.execute(KB_DDL)
+        if body.sil:
+            cur.execute("DELETE FROM bilgi_tabani WHERE kategori=%s AND durum='bekliyor' AND " + ("konu=%s" if body.konu else "konu IS NULL"), (body.kategori, body.konu) if body.konu else (body.kategori,))
+        rows = [{"metin": r.get("metin", ""), "n": int(r.get("n") or 1), "ids": list(r.get("ids") or [])[:6], "ek": r.get("ek") or {}} for r in body.satirlar if r.get("metin")]
+        _save(cur, body.kategori, body.konu, rows); conn.commit(); conn.close()
+        return {"yazilan": len(rows)}
 
     @app.get("/admin/kb/status")
     def kb_status(authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
