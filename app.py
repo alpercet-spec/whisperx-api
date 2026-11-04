@@ -428,8 +428,35 @@ def daily_status(authorization: str | None = Header(None), wx_session: str | Non
 
 
 # ---------------- Toplu analiz (tablo üzerinden) ----------------
-def _analyze_batch_worker(limit, where, tier=2):
-    ANALYZE_STATE.update(durum="calisiyor", tier=tier, secilen=0, yapilan=0, hata=0, son_hata=None, input_tokens=0, output_tokens=0, tahmini_usd=0.0, baslangic=time.time(), sure_sn=0)
+def _analyze_one(conn_factory, tier, row):
+    """Tek kayıt: Claude çağrısı + DB yazımı. Thread havuzunda çalışır."""
+    drive_id, dokum, yon, dahili, tarih = row
+    for attempt in range(2):
+        try:
+            out, usage = analyze_dialogue(dokum, yon, dahili, tarih, tier=tier)
+            if isinstance(out, dict) and out.get("ham") and attempt == 0: continue  # bozuk JSON -> bir kez daha dene
+            conn = conn_factory(); cur = conn.cursor()
+            if tier == 1:
+                cur.execute("UPDATE kayit_dokumleri SET analiz_t1=%s, puan_t1=%s, aday=%s, temsilci_sp=COALESCE(temsilci_sp,%s), sonuc=COALESCE(sonuc,%s) WHERE drive_id=%s",
+                            (json.dumps(out, ensure_ascii=False), out.get("genel_puan"), out.get("aday"), out.get("temsilci_speaker"), (out.get("sonuc") or None), drive_id))
+            else:
+                k = out.get("kalite", {}) if isinstance(out, dict) else {}
+                cur.execute("UPDATE kayit_dokumleri SET analiz=%s, genel_puan=%s, temsilci_sp=%s, sonuc=%s WHERE drive_id=%s",
+                            (json.dumps(out, ensure_ascii=False), k.get("genel_puan"), out.get("temsilci_speaker"), (out.get("sonuc") or None), drive_id))
+                if not out.get("ham"):
+                    try: extract_rows(cur, drive_id, tarih, yon, dahili, out)
+                    except Exception: pass
+            conn.commit(); conn.close()
+            return usage, None
+        except Exception as e:
+            err = str(e)[:300]
+            if attempt == 0 and ("429" in err or "529" in err or "overloaded" in err.lower()): time.sleep(5); continue
+            return None, err
+    return None, "bozuk JSON (2 deneme)"
+
+def _analyze_batch_worker(limit, where, tier=2, workers=4):
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    ANALYZE_STATE.update(durum="calisiyor", tier=tier, secilen=0, yapilan=0, hata=0, son_hata=None, input_tokens=0, output_tokens=0, tahmini_usd=0.0, baslangic=time.time(), sure_sn=0, workers=workers)
     ip, op = (IN_PRICE_T1, OUT_PRICE_T1) if tier == 1 else (IN_PRICE, OUT_PRICE)
     try:
         conn = _db(); cur = conn.cursor()
@@ -437,39 +464,35 @@ def _analyze_batch_worker(limit, where, tier=2):
         cols = {r[0] for r in cur.fetchall()}
         for name, ddl in (("analiz_t1", "JSON NULL"), ("puan_t1", "TINYINT NULL"), ("aday", "VARCHAR(16) NULL")):
             if name not in cols: cur.execute(f"ALTER TABLE kayit_dokumleri ADD COLUMN {name} {ddl}")
+        for ddl in EXTRACT_DDL: cur.execute(ddl)
         conn.commit()
         col = "analiz_t1" if tier == 1 else "analiz"
         cur.execute(f"SELECT drive_id, dokum, yon, dahili, kayit_tarihi FROM kayit_dokumleri WHERE durum='tamam' AND {col} IS NULL AND CHAR_LENGTH(dokum) > 200 {where} ORDER BY kayit_tarihi DESC, id LIMIT %s", (limit,))
-        rows = cur.fetchall(); ANALYZE_STATE["secilen"] = len(rows)
-        for drive_id, dokum, yon, dahili, tarih in rows:
-            try:
-                out, usage = analyze_dialogue(dokum, yon, dahili, tarih, tier=tier)
-                if tier == 1:
-                    cur.execute("UPDATE kayit_dokumleri SET analiz_t1=%s, puan_t1=%s, aday=%s, temsilci_sp=COALESCE(temsilci_sp,%s), sonuc=COALESCE(sonuc,%s) WHERE drive_id=%s",
-                                (json.dumps(out, ensure_ascii=False), out.get("genel_puan"), out.get("aday"), out.get("temsilci_speaker"), (out.get("sonuc") or None), drive_id))
+        rows = cur.fetchall(); conn.close(); ANALYZE_STATE["secilen"] = len(rows)
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = [ex.submit(_analyze_one, _db, tier, r) for r in rows]
+            for f in as_completed(futs):
+                usage, err = f.result()
+                if err: ANALYZE_STATE["hata"] += 1; ANALYZE_STATE["son_hata"] = err
                 else:
-                    k = out.get("kalite", {}) if isinstance(out, dict) else {}
-                    cur.execute("UPDATE kayit_dokumleri SET analiz=%s, genel_puan=%s, temsilci_sp=%s, sonuc=%s WHERE drive_id=%s",
-                                (json.dumps(out, ensure_ascii=False), k.get("genel_puan"), out.get("temsilci_speaker"), (out.get("sonuc") or None), drive_id))
-                conn.commit(); ANALYZE_STATE["yapilan"] += 1; ANALYZE_STATE["sure_sn"] = round(time.time() - ANALYZE_STATE["baslangic"])
-                ANALYZE_STATE["input_tokens"] += usage.get("input_tokens", 0); ANALYZE_STATE["output_tokens"] += usage.get("output_tokens", 0)
-                ANALYZE_STATE["tahmini_usd"] = round(ANALYZE_STATE["input_tokens"] / 1e6 * ip + ANALYZE_STATE["output_tokens"] / 1e6 * op, 3)
-            except Exception as e:
-                ANALYZE_STATE["hata"] += 1; ANALYZE_STATE["son_hata"] = str(e)[:300]
-        conn.close(); ANALYZE_STATE["durum"] = "tamam"
+                    ANALYZE_STATE["yapilan"] += 1
+                    ANALYZE_STATE["input_tokens"] += usage.get("input_tokens", 0); ANALYZE_STATE["output_tokens"] += usage.get("output_tokens", 0)
+                    ANALYZE_STATE["tahmini_usd"] = round(ANALYZE_STATE["input_tokens"] / 1e6 * ip + ANALYZE_STATE["output_tokens"] / 1e6 * op, 3)
+                ANALYZE_STATE["sure_sn"] = round(time.time() - ANALYZE_STATE["baslangic"])
+        ANALYZE_STATE["durum"] = "tamam"
     except Exception as e:
         ANALYZE_STATE.update(durum="hata", son_hata=str(e)[:500])
 
 @app.post("/admin/analyze_batch")
-def analyze_batch(limit: int = 30, since: str | None = None, tier: int = 2, only_candidates: bool = False, yon: str | None = None, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+def analyze_batch(limit: int = 30, since: str | None = None, tier: int = 2, only_candidates: bool = False, yon: str | None = None, workers: int = 4, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
     check_key(authorization, wx_session)
     if not ANTHROPIC_API_KEY: raise HTTPException(500, "ANTHROPIC_API_KEY ayarlanmadı")
     if ANALYZE_STATE["durum"] == "calisiyor": return ANALYZE_STATE
     where = f"AND kayit_tarihi >= '{since}'" if since and _re.fullmatch(r"\d{4}-\d{2}-\d{2}", since) else ""
     if yon in ("gelen", "giden"): where += f" AND yon='{yon}'"
     if tier == 2 and only_candidates: where += " AND aday IN ('iyi','kotu')"
-    _th.Thread(target=_analyze_batch_worker, args=(limit, where, tier), daemon=True).start()
-    return {"baslatildi": True, "limit": limit, "tier": tier}
+    _th.Thread(target=_analyze_batch_worker, args=(limit, where, tier, max(1, min(workers, 8))), daemon=True).start()
+    return {"baslatildi": True, "limit": limit, "tier": tier, "workers": workers}
 
 @app.get("/admin/analyze_status")
 def analyze_status(authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
