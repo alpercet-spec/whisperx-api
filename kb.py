@@ -273,7 +273,7 @@ def register(app, check_key, _db, api_key_getter, model_getter, prices, page_gua
         if konu == "-": sql += " AND konu IS NULL"
         if durum: sql += " AND durum=%s"; args.append(durum)
         if q: sql += " AND (metin LIKE %s OR nihai LIKE %s)"; args += [f"%{q}%", f"%{q}%"]
-        sql += " ORDER BY (celiski IS NOT NULL) DESC, destek DESC, id LIMIT %s"; args.append(limit)
+        sql += " ORDER BY (JSON_EXTRACT(ek,'$.soru') IS NOT NULL) DESC, (celiski IS NOT NULL) DESC, destek DESC, id LIMIT %s"; args.append(limit)
         cur.execute(sql, args)
         rows = [{"id": r[0], "kategori": r[1], "konu": r[2], "metin": r[3], "ek": json.loads(r[4]) if r[4] else {}, "destek": r[5],
                  "ornekler": json.loads(r[6]) if r[6] else [], "celiski": r[7], "durum": r[8], "nihai": r[9]} for r in cur.fetchall()]

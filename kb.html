@@ -31,6 +31,8 @@
   .metin{font-size:15px}.nihai{color:var(--accent);font-weight:600}
   .meta{font-size:12px;color:var(--muted);margin-top:3px}.meta a{color:var(--accent);cursor:pointer;margin-right:6px}
   .cel{background:var(--warnbg);color:var(--warn);padding:5px 9px;border-radius:7px;font-size:13px;margin-top:5px}
+  .soru{background:#dbeafe;color:#1e40af;padding:6px 10px;border-radius:7px;font-size:14px;margin-top:6px;font-weight:600}
+  @media (prefers-color-scheme:dark){.soru{background:#1e3a5f;color:#bfdbfe}}
   .var{font-size:13px;color:var(--muted);margin-top:3px}
   .act{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
   .badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;background:#e5e7eb;color:#374151}
@@ -71,6 +73,7 @@
       <button class="ok sm" onclick="bulk('onayli')">Listedeki bekleyenlerin tümünü onayla</button>
       <button class="sec sm" onclick="addNew()">+ Elle ekle</button>
     </div>
+    <p class="small">❓ mavi kutu: senin kararın gereken konu. Onayla = metni olduğu gibi kabul et; Düzelt = doğru halini yaz; Reddet = agent bunu öğrenmesin. "Onaylı" filtresi Claude'un otomatik onayladıklarını da gösterir; yanlış gördüğünü Düzelt/Reddet ile değiştirebilirsin.</p>
     <div id="list" style="margin-top:8px"></div>
   </div>
 </main>
@@ -107,6 +110,7 @@ function render(){
     if(ek.varyantlar?.length)body+=`<div class="var">${esc(ek.varyantlar.slice(0,6).join(' | '))}</div>`;
     if(ek.amac)body+=`<div class="var">amaç: ${esc(ek.amac)}</div>`;
     if(ek.grup)body+=`<div class="var">grup: ${esc(ek.grup)}</div>`;
+    if(ek.soru)body+=`<div class="soru">❓ ${esc(ek.soru)}</div>`;
     if(it.celiski)body+=`<div class="cel">⚠ ${esc(it.celiski)}</div>`;
     body+=`<div class="meta"><span class="badge">${it.durum}</span> · ${it.destek} görüşme · ${it.konu?esc(it.konu)+' · ':''}örnek: ${(it.ornekler||[]).slice(0,4).map((d,i)=>`<a onclick="showDokum('${d}')">#${i+1}</a>`).join('')}</div>`;
     body+=`<div id="ed${it.id}" hidden style="margin-top:6px"><textarea id="ta${it.id}">${esc(it.nihai||it.metin)}</textarea><div class="row" style="margin-top:4px"><button class="sm" onclick="saveEdit(${it.id})">Kaydet (düzeltildi)</button><button class="sec sm" onclick="$('#ed${it.id}').hidden=true">Vazgeç</button></div></div>`;
