@@ -185,14 +185,23 @@ def _load_prompt():
     except FileNotFoundError:
         return "Görüşmeyi analiz et ve JSON döndür.\nGÖRÜŞME DÖKÜMÜ:\n{dokum}"
 ANALYZE_PROMPT_TPL = _load_prompt()
+def _load_prompt_t1():
+    try:
+        with open(os.path.join(os.path.dirname(__file__), "analiz_prompt_t1.md"), encoding="utf-8") as f: return f.read()
+    except FileNotFoundError: return ANALYZE_PROMPT_TPL
+ANALYZE_PROMPT_T1 = _load_prompt_t1()
+ANALYZE_MODEL_T1 = os.environ.get("ANALYZE_MODEL_T1", "claude-haiku-5-5")
+IN_PRICE_T1 = float(os.environ.get("ANALYZE_T1_IN_PRICE_PER_M", "1")); OUT_PRICE_T1 = float(os.environ.get("ANALYZE_T1_OUT_PRICE_PER_M", "5"))
 ANALYZE_STATE = {"durum": "bekliyor", "secilen": 0, "yapilan": 0, "hata": 0, "son_hata": None, "input_tokens": 0, "output_tokens": 0, "tahmini_usd": 0.0}
 IN_PRICE = float(os.environ.get("ANALYZE_IN_PRICE_PER_M", "3")); OUT_PRICE = float(os.environ.get("ANALYZE_OUT_PRICE_PER_M", "15"))
 
-def analyze_dialogue(dialogue: str, yon=None, dahili=None, tarih=None):
-    """Claude'a gönderir; (json_sonuc, usage) döner."""
-    prompt = (ANALYZE_PROMPT_TPL.replace("{yon}", str(yon or "")).replace("{dahili}", str(dahili or ""))
+def analyze_dialogue(dialogue: str, yon=None, dahili=None, tarih=None, tier: int = 2):
+    """Claude'a gönderir; (json_sonuc, usage) döner. tier=1: hızlı/ucuz sınıflandırma, tier=2: detaylı çıkarım."""
+    tpl = ANALYZE_PROMPT_T1 if tier == 1 else ANALYZE_PROMPT_TPL
+    model = ANALYZE_MODEL_T1 if tier == 1 else ANALYZE_MODEL
+    prompt = (tpl.replace("{yon}", str(yon or "")).replace("{dahili}", str(dahili or ""))
               .replace("{kayit_tarihi}", str(tarih or "")).replace("{dokum}", dialogue[:30000]))
-    payload = {"model": ANALYZE_MODEL, "max_tokens": 8000, "messages": [{"role": "user", "content": prompt}]}
+    payload = {"model": model, "max_tokens": 3000 if tier == 1 else 8000, "messages": [{"role": "user", "content": prompt}]}
     req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(payload).encode(),
         headers={"content-type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01"})
     with urllib.request.urlopen(req, timeout=180) as r:
@@ -419,21 +428,32 @@ def daily_status(authorization: str | None = Header(None), wx_session: str | Non
 
 
 # ---------------- Toplu analiz (tablo üzerinden) ----------------
-def _analyze_batch_worker(limit, where):
-    ANALYZE_STATE.update(durum="calisiyor", secilen=0, yapilan=0, hata=0, son_hata=None, input_tokens=0, output_tokens=0, tahmini_usd=0.0)
+def _analyze_batch_worker(limit, where, tier=2):
+    ANALYZE_STATE.update(durum="calisiyor", tier=tier, secilen=0, yapilan=0, hata=0, son_hata=None, input_tokens=0, output_tokens=0, tahmini_usd=0.0)
+    ip, op = (IN_PRICE_T1, OUT_PRICE_T1) if tier == 1 else (IN_PRICE, OUT_PRICE)
     try:
         conn = _db(); cur = conn.cursor()
-        cur.execute(f"SELECT drive_id, dokum, yon, dahili, kayit_tarihi FROM kayit_dokumleri WHERE durum='tamam' AND analiz IS NULL AND CHAR_LENGTH(dokum) > 200 {where} ORDER BY kayit_tarihi DESC, id LIMIT %s", (limit,))
+        cur.execute("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='kayit_dokumleri'")
+        cols = {r[0] for r in cur.fetchall()}
+        for name, ddl in (("analiz_t1", "JSON NULL"), ("puan_t1", "TINYINT NULL"), ("aday", "VARCHAR(16) NULL")):
+            if name not in cols: cur.execute(f"ALTER TABLE kayit_dokumleri ADD COLUMN {name} {ddl}")
+        conn.commit()
+        col = "analiz_t1" if tier == 1 else "analiz"
+        cur.execute(f"SELECT drive_id, dokum, yon, dahili, kayit_tarihi FROM kayit_dokumleri WHERE durum='tamam' AND {col} IS NULL AND CHAR_LENGTH(dokum) > 200 {where} ORDER BY kayit_tarihi DESC, id LIMIT %s", (limit,))
         rows = cur.fetchall(); ANALYZE_STATE["secilen"] = len(rows)
         for drive_id, dokum, yon, dahili, tarih in rows:
             try:
-                out, usage = analyze_dialogue(dokum, yon, dahili, tarih)
-                k = out.get("kalite", {}) if isinstance(out, dict) else {}
-                cur.execute("UPDATE kayit_dokumleri SET analiz=%s, genel_puan=%s, temsilci_sp=%s, sonuc=%s WHERE drive_id=%s",
-                            (json.dumps(out, ensure_ascii=False), k.get("genel_puan"), out.get("temsilci_speaker"), (out.get("sonuc") or None), drive_id))
+                out, usage = analyze_dialogue(dokum, yon, dahili, tarih, tier=tier)
+                if tier == 1:
+                    cur.execute("UPDATE kayit_dokumleri SET analiz_t1=%s, puan_t1=%s, aday=%s, temsilci_sp=COALESCE(temsilci_sp,%s), sonuc=COALESCE(sonuc,%s) WHERE drive_id=%s",
+                                (json.dumps(out, ensure_ascii=False), out.get("genel_puan"), out.get("aday"), out.get("temsilci_speaker"), (out.get("sonuc") or None), drive_id))
+                else:
+                    k = out.get("kalite", {}) if isinstance(out, dict) else {}
+                    cur.execute("UPDATE kayit_dokumleri SET analiz=%s, genel_puan=%s, temsilci_sp=%s, sonuc=%s WHERE drive_id=%s",
+                                (json.dumps(out, ensure_ascii=False), k.get("genel_puan"), out.get("temsilci_speaker"), (out.get("sonuc") or None), drive_id))
                 conn.commit(); ANALYZE_STATE["yapilan"] += 1
                 ANALYZE_STATE["input_tokens"] += usage.get("input_tokens", 0); ANALYZE_STATE["output_tokens"] += usage.get("output_tokens", 0)
-                ANALYZE_STATE["tahmini_usd"] = round(ANALYZE_STATE["input_tokens"] / 1e6 * IN_PRICE + ANALYZE_STATE["output_tokens"] / 1e6 * OUT_PRICE, 3)
+                ANALYZE_STATE["tahmini_usd"] = round(ANALYZE_STATE["input_tokens"] / 1e6 * ip + ANALYZE_STATE["output_tokens"] / 1e6 * op, 3)
             except Exception as e:
                 ANALYZE_STATE["hata"] += 1; ANALYZE_STATE["son_hata"] = str(e)[:300]
         conn.close(); ANALYZE_STATE["durum"] = "tamam"
@@ -441,13 +461,14 @@ def _analyze_batch_worker(limit, where):
         ANALYZE_STATE.update(durum="hata", son_hata=str(e)[:500])
 
 @app.post("/admin/analyze_batch")
-def analyze_batch(limit: int = 30, since: str | None = None, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+def analyze_batch(limit: int = 30, since: str | None = None, tier: int = 2, only_candidates: bool = False, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
     check_key(authorization, wx_session)
     if not ANTHROPIC_API_KEY: raise HTTPException(500, "ANTHROPIC_API_KEY ayarlanmadı")
     if ANALYZE_STATE["durum"] == "calisiyor": return ANALYZE_STATE
     where = f"AND kayit_tarihi >= '{since}'" if since and _re.fullmatch(r"\d{4}-\d{2}-\d{2}", since) else ""
-    _th.Thread(target=_analyze_batch_worker, args=(limit, where), daemon=True).start()
-    return {"baslatildi": True, "limit": limit}
+    if tier == 2 and only_candidates: where += " AND aday IN ('iyi','kotu')"
+    _th.Thread(target=_analyze_batch_worker, args=(limit, where, tier), daemon=True).start()
+    return {"baslatildi": True, "limit": limit, "tier": tier}
 
 @app.get("/admin/analyze_status")
 def analyze_status(authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
@@ -457,8 +478,9 @@ def analyze_status(authorization: str | None = Header(None), wx_session: str | N
 def analyze_sample(n: int = 5, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
     check_key(authorization, wx_session)
     conn = _db(); cur = conn.cursor()
-    cur.execute("SELECT drive_id, kayit_tarihi, yon, dahili, genel_puan, dokum, analiz FROM kayit_dokumleri WHERE analiz IS NOT NULL ORDER BY guncelleme DESC LIMIT %s", (n,))
-    rows = [{"drive_id": r[0], "tarih": str(r[1]), "yon": r[2], "dahili": r[3], "puan": r[4], "dokum": r[5], "analiz": json.loads(r[6])} for r in cur.fetchall()]
+    cur.execute("SELECT drive_id, kayit_tarihi, yon, dahili, genel_puan, dokum, analiz, analiz_t1, puan_t1, aday FROM kayit_dokumleri WHERE analiz IS NOT NULL OR analiz_t1 IS NOT NULL ORDER BY guncelleme DESC LIMIT %s", (n,))
+    rows = [{"drive_id": r[0], "tarih": str(r[1]), "yon": r[2], "dahili": r[3], "puan": r[4], "dokum": r[5], "analiz": json.loads(r[6]) if r[6] else None,
+             "analiz_t1": json.loads(r[7]) if r[7] else None, "puan_t1": r[8], "aday": r[9]} for r in cur.fetchall()]
     conn.close(); return rows
 
 @app.post("/admin/analyze_reset")
