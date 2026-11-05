@@ -49,7 +49,7 @@ def _ensure_models():
         print("Hazır.", flush=True)
 
 PANEL_DIR = os.environ.get("PANEL_DIR", "/panel")
-PANEL_FILES = ("panel.html", "kb.html", "kb_mobil.html")
+PANEL_FILES = ("panel.html", "kb.html", "kb_mobil.html", "kayitlar.html")
 
 def panel_file(name: str) -> str:
     """Panel dosyasını önce /panel (mount) klasöründen, yoksa imajdan okur."""
@@ -433,6 +433,13 @@ def daily_job(days_back=None):
     except Exception as e:
         DAILY_STATE.update(durum="hata", son_hata=str(e)[:500])
     DAILY_STATE["simdiki"] = None
+    try:
+        conn = _db(); cur = conn.cursor()
+        cur.execute("CREATE TABLE IF NOT EXISTS gece_log (id INT AUTO_INCREMENT PRIMARY KEY, calisma DATETIME, durum VARCHAR(16), bulunan INT, yeni INT, islenen INT, atlanan INT, hata INT, son_hata TEXT)")
+        cur.execute("INSERT INTO gece_log (calisma,durum,bulunan,yeni,islenen,atlanan,hata,son_hata) VALUES (NOW(),%s,%s,%s,%s,%s,%s,%s)",
+                    (DAILY_STATE["durum"], DAILY_STATE["bulunan"], DAILY_STATE["yeni"], DAILY_STATE["islenen"], DAILY_STATE["atlanan"], DAILY_STATE["hata"], DAILY_STATE["son_hata"]))
+        conn.commit(); conn.close()
+    except Exception: pass
 
 def _scheduler():
     while True:
@@ -665,3 +672,85 @@ def _page_guard(wx_session):
     if not PANEL_PASS or not session_ok(wx_session): return LOGIN_HTML.replace("__ERR__", "")
     return None
 _kb.register(app, check_key, _db, lambda: ANTHROPIC_API_KEY, lambda: ANALYZE_MODEL, (IN_PRICE, OUT_PRICE), _page_guard, panel_file)
+
+
+# ---------------- Kayıtlar sayfası (dökümleri listele / ara / filtrele) ----------------
+import re as _re2
+@app.get("/kayitlar", response_class=HTMLResponse)
+def kayitlar_page(wx_session: str | None = Cookie(None)):
+    g = _page_guard(wx_session)
+    return g or panel_file("kayitlar.html")
+
+_FT_READY = {"ok": None}
+def _ensure_fulltext(cur):
+    if _FT_READY["ok"] is not None: return _FT_READY["ok"]
+    try:
+        cur.execute("SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='kayit_dokumleri' AND INDEX_NAME='ft_dokum'")
+        if cur.fetchone()[0] == 0: cur.execute("ALTER TABLE kayit_dokumleri ADD FULLTEXT INDEX ft_dokum (dokum)")
+        _FT_READY["ok"] = True
+    except Exception: _FT_READY["ok"] = False
+    return _FT_READY["ok"]
+
+@app.get("/admin/kayitlar")
+def kayitlar(q: str | None = None, yon: str | None = None, dahili: str | None = None, tur: str | None = None, etiket: str | None = None,
+             tarih1: str | None = None, tarih2: str | None = None, min_puan: int | None = None, page: int = 1, per: int = 25,
+             authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    check_key(authorization, wx_session)
+    conn = _db(); cur = conn.cursor()
+    where, args = ["k.durum='tamam'"], []
+    if yon in ("gelen", "giden"): where.append("k.yon=%s"); args.append(yon)
+    if dahili: where.append("k.dahili=%s"); args.append(dahili)
+    if tur == "analiz_yok": where.append("g.drive_id IS NULL")
+    elif tur: where.append("g.gorusme_turu=%s"); args.append(tur)
+    if etiket: where.append("g.etiket=%s"); args.append(etiket)
+    if tarih1 and _re2.fullmatch(r"\d{4}-\d{2}-\d{2}", tarih1): where.append("k.kayit_tarihi>=%s"); args.append(tarih1)
+    if tarih2 and _re2.fullmatch(r"\d{4}-\d{2}-\d{2}", tarih2): where.append("k.kayit_tarihi<=%s"); args.append(tarih2)
+    if min_puan is not None: where.append("k.genel_puan>=%s"); args.append(min_puan)
+    q = (q or "").strip()
+    if q:
+        ft = _ensure_fulltext(cur); conn.commit()
+        if ft and len(q) >= 3 and not any(c in q for c in "+-*\"()<>~@"):
+            where.append("MATCH(k.dokum) AGAINST(%s IN BOOLEAN MODE)"); args.append(" ".join("+" + w + "*" for w in q.split() if len(w) >= 2))
+        else:
+            where.append("k.dokum LIKE %s"); args.append(f"%{q}%")
+    W = " AND ".join(where)
+    base = "FROM kayit_dokumleri k LEFT JOIN gorusme_ozet g ON g.drive_id=k.drive_id WHERE " + W
+    cur.execute("SELECT COUNT(*) " + base, args); total = cur.fetchone()[0]
+    per = max(5, min(per, 100)); page = max(1, page)
+    cur.execute("SELECT k.drive_id, k.kayit_tarihi, k.yon, k.dahili, k.telefon, k.boyut_kb, k.islem_sn, k.genel_puan, g.gorusme_turu, g.etiket, g.sonuc, g.ozet, "
+                "CASE WHEN %s<>'' THEN SUBSTRING(k.dokum, GREATEST(1, LOCATE(%s, k.dokum)-80), 220) ELSE LEFT(k.dokum, 200) END " + base +
+                " ORDER BY k.kayit_tarihi DESC, k.id DESC LIMIT %s OFFSET %s", [q, q.split()[0] if q else ""] + args + [per, (page - 1) * per])
+    rows = [{"drive_id": r[0], "tarih": str(r[1]), "yon": r[2], "dahili": r[3], "telefon": r[4], "boyut_kb": r[5], "islem_sn": r[6], "puan": r[7],
+             "tur": r[8], "etiket": r[9], "sonuc": r[10], "ozet": r[11], "snippet": r[12]} for r in cur.fetchall()]
+    conn.close()
+    return {"toplam": total, "sayfa": page, "per": per, "kayitlar": rows}
+
+@app.get("/admin/kayitlar/filtreler")
+def kayit_filtreler(authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    check_key(authorization, wx_session)
+    conn = _db(); cur = conn.cursor()
+    cur.execute("SELECT gorusme_turu, COUNT(*) FROM gorusme_ozet GROUP BY 1 ORDER BY 2 DESC"); turler = [[r[0], r[1]] for r in cur.fetchall()]
+    cur.execute("SELECT dahili, COUNT(*) FROM kayit_dokumleri WHERE durum='tamam' GROUP BY 1 ORDER BY 2 DESC"); dahililer = [[r[0], r[1]] for r in cur.fetchall()]
+    cur.execute("SELECT etiket, COUNT(*) FROM gorusme_ozet GROUP BY 1"); etiketler = [[r[0], r[1]] for r in cur.fetchall()]
+    cur.execute("SELECT MIN(kayit_tarihi), MAX(kayit_tarihi) FROM kayit_dokumleri WHERE durum='tamam'"); mn, mx = cur.fetchone()
+    try:
+        cur.execute("SELECT calisma, durum, bulunan, yeni, islenen, atlanan, hata FROM gece_log ORDER BY id DESC LIMIT 10"); gece = [[str(r[0])] + list(r[1:]) for r in cur.fetchall()]
+    except Exception: gece = []
+    conn.close()
+    return {"turler": turler, "dahililer": dahililer, "etiketler": etiketler, "tarih_min": str(mn), "tarih_max": str(mx), "gece": gece}
+
+@app.get("/admin/kayit/{drive_id}")
+def kayit_detay(drive_id: str, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    check_key(authorization, wx_session)
+    conn = _db(); cur = conn.cursor()
+    cur.execute("SELECT dosya_adi, kayit_tarihi, yon, dahili, telefon, boyut_kb, islem_sn, genel_puan, dokum, analiz FROM kayit_dokumleri WHERE drive_id=%s", (drive_id,))
+    r = cur.fetchone(); conn.close()
+    if not r: raise HTTPException(404, "bulunamadı")
+    return {"drive_id": drive_id, "dosya": r[0], "tarih": str(r[1]), "yon": r[2], "dahili": r[3], "telefon": r[4], "boyut_kb": r[5], "islem_sn": r[6], "puan": r[7],
+            "dokum": r[8], "analiz": json.loads(r[9]) if r[9] else None}
+
+def _ft_bg():
+    try:
+        conn = _db(); cur = conn.cursor(); _ensure_fulltext(cur); conn.commit(); conn.close()
+    except Exception: pass
+_th.Thread(target=_ft_bg, daemon=True).start()

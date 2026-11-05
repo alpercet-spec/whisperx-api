@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Görüşme Kayıtları</title>
+<style>
+  :root{--bg:#f4f5f7;--card:#fff;--text:#1a1d21;--muted:#6b7280;--line:#e5e7eb;--accent:#0f766e;--ok:#16a34a;--err:#dc2626;--warn:#d97706;--hl:#fef08a}
+  @media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--text:#e7e9ee;--muted:#9aa3b2;--line:#2a2f3a;--hl:#854d0e}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{padding:12px 20px;border-bottom:1px solid var(--line);background:var(--card);display:flex;align-items:center;gap:14px;flex-wrap:wrap;position:sticky;top:0;z-index:5}
+  header h1{font-size:17px;margin:0}header a{color:var(--accent);font-size:13px}
+  main{max-width:1200px;margin:0 auto;padding:16px;display:grid;gap:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  select,input{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--text);font-size:14px}
+  input[type=search]{min-width:260px;flex:1}
+  button{padding:8px 14px;border:0;border-radius:8px;background:var(--accent);color:#fff;font-weight:600;cursor:pointer;font-size:14px}
+  button.sec{background:transparent;color:var(--accent);border:1px solid var(--accent)}button:disabled{opacity:.4;cursor:default}
+  .small{font-size:12px;color:var(--muted)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  th{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+  tr.r{cursor:pointer}tr.r:hover{background:rgba(15,118,110,.06)}
+  .badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;background:var(--line);color:var(--text);white-space:nowrap}
+  .b-gelen{background:#dcfce7;color:#166534}.b-giden{background:#dbeafe;color:#1e40af}
+  .b-iyi_ornek{background:#dcfce7;color:#166534}.b-kotu_ornek{background:#fee2e2;color:#991b1b}.b-kullanilmaz{background:#e5e7eb;color:#374151}.b-notr{background:#fef3c7;color:#92400e}
+  .puan{font-weight:700}.p-hi{color:var(--ok)}.p-mid{color:var(--warn)}.p-lo{color:var(--err)}
+  .snip{color:var(--muted);font-size:13px;max-width:520px}.snip mark{background:var(--hl);color:inherit;border-radius:3px}
+  .pager{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+  dialog{border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--text);width:94vw;max-width:1000px;padding:0;max-height:90vh}
+  dialog .hd{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+  .dokum{white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;padding:14px 16px;max-height:60vh;overflow:auto}
+  .sp0{color:#0369a1}.sp1{color:#b45309}.sp2{color:#7c3aed}
+  .an{padding:10px 16px;border-top:1px solid var(--line);font-size:14px;display:grid;gap:4px}
+  .gece{font-size:12px;color:var(--muted)}
+  @media (max-width:700px){.hide-m{display:none}th,td{padding:7px 5px}.snip{max-width:none}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Görüşme Kayıtları</h1><span class="small" id="info"></span>
+  <span style="margin-left:auto"></span>
+  <a href="/">Ses paneli</a><a href="/bilgi">Bilgi tabanı</a><a href="/logout">Çıkış</a>
+</header>
+<main>
+  <div class="card">
+    <form class="row" onsubmit="event.preventDefault();page=1;load()">
+      <input type="search" id="q" placeholder="Dökümde ara… (örn. dudak renklendirme, botoks, Ayşe)">
+      <select id="yon"><option value="">Gelen + giden</option><option value="gelen">Gelen</option><option value="giden">Giden</option></select>
+      <select id="tur"><option value="">Tüm kategoriler</option></select>
+      <select id="etiket"><option value="">Tüm etiketler</option></select>
+      <select id="dahili"><option value="">Tüm dahililer</option></select>
+      <input type="date" id="t1" title="Başlangıç"><input type="date" id="t2" title="Bitiş">
+      <select id="per"><option>25</option><option>50</option><option>100</option></select>
+      <button>Ara</button><button type="button" class="sec" onclick="reset()">Temizle</button>
+    </form>
+    <div class="gece" id="gece"></div>
+  </div>
+  <div class="card">
+    <div class="pager"><span id="count" class="small"></span><div class="row"><button class="sec" id="prev" onclick="page--;load()">‹ Önceki</button><span id="pg" class="small"></span><button class="sec" id="next" onclick="page++;load()">Sonraki ›</button></div></div>
+    <table style="margin-top:10px"><thead><tr><th>Tarih</th><th>Yön</th><th>Dahili</th><th class="hide-m">Telefon</th><th>Kategori</th><th>Puan</th><th>Özet / eşleşen metin</th></tr></thead><tbody id="rows"></tbody></table>
+    <div class="pager" style="margin-top:10px"><span></span><div class="row"><button class="sec" onclick="page--;load()" id="prev2">‹ Önceki</button><button class="sec" onclick="page++;load()" id="next2">Sonraki ›</button></div></div>
+  </div>
+</main>
+<dialog id="dlg">
+  <div class="hd"><div><b id="dt"></b><div class="small" id="dsub"></div></div><div class="row"><button class="sec" onclick="copyD()">Kopyala</button><button class="sec" onclick="dlg.close()">Kapat</button></div></div>
+  <div class="dokum" id="ddokum"></div>
+  <div class="an" id="dan" hidden></div>
+</dialog>
+<script>
+const $=s=>document.querySelector(s); const dlg=$('#dlg'); let page=1, cur=null;
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function api(u){const r=await fetch(u);if(r.status===401){location.href='/login';throw new Error('401')}return r.json()}
+const TUR={bilgi_alma:'Bilgi alma',randevu_alma:'Randevu alma',randevu_degisiklik:'Randevu değişikliği',randevu_iptal:'Randevu iptal',fiyat_sorgu:'Fiyat sorgu',kontrol_randevu:'Kontrol randevusu',sikayet:'Şikayet',islem_sonrasi:'İşlem sonrası',teyit:'Teyit',geri_arama:'Geri arama',yanlis_numara:'Yanlış numara',satis_disi:'Satış dışı',diger:'Diğer'};
+const t=k=>TUR[k]||(k||'').replace(/_/g,' ');
+function qs(){const p=new URLSearchParams({page,per:$('#per').value});for(const k of ['q','yon','tur','etiket','dahili']){const v=$('#'+k).value;if(v)p.set(k,v)}if($('#t1').value)p.set('tarih1',$('#t1').value);if($('#t2').value)p.set('tarih2',$('#t2').value);return p}
+function hl(s,q){s=esc(s);if(!q)return s;for(const w of q.split(/\s+/).filter(w=>w.length>=2)){s=s.replace(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi'),m=>'<mark>'+m+'</mark>')}return s}
+async function load(){
+  const p=qs(); $('#rows').innerHTML='<tr><td colspan="7" class="small">yükleniyor…</td></tr>';
+  const d=await api('/admin/kayitlar?'+p); const q=$('#q').value.trim();
+  const pages=Math.max(1,Math.ceil(d.toplam/d.per)); if(page>pages){page=pages;return load()}
+  $('#count').textContent=`${d.toplam.toLocaleString('tr')} kayıt`; $('#pg').textContent=`sayfa ${page} / ${pages}`;
+  for(const id of ['prev','prev2'])$('#'+id).disabled=page<=1; for(const id of ['next','next2'])$('#'+id).disabled=page>=pages;
+  $('#rows').innerHTML=d.kayitlar.map(r=>{
+    const pc=r.puan==null?'':(r.puan>=70?'p-hi':r.puan>=50?'p-mid':'p-lo');
+    return `<tr class="r" onclick="open_('${r.drive_id}')"><td style="white-space:nowrap">${r.tarih}</td><td><span class="badge b-${r.yon||''}">${r.yon||'-'}</span></td><td>${esc(r.dahili||'-')}</td><td class="hide-m">${esc(r.telefon||'')}</td>
+      <td>${r.tur?`<span class="badge">${esc(t(r.tur))}</span>`:'<span class="small">analiz yok</span>'}${r.etiket?` <span class="badge b-${r.etiket}">${r.etiket.replace('_',' ')}</span>`:''}</td>
+      <td class="puan ${pc}">${r.puan??''}</td><td class="snip">${q?hl(r.snippet,q):esc(r.ozet||r.snippet||'')}</td></tr>`}).join('')||'<tr><td colspan="7" class="small">kayıt yok</td></tr>';
+  try{localStorage.setItem('kayit_f',JSON.stringify(Object.fromEntries(p)))}catch(e){}
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function reset(){for(const k of ['q','yon','tur','etiket','dahili','t1','t2'])$('#'+k).value='';page=1;load()}
+async function open_(id){
+  const d=await api('/admin/kayit/'+id); cur=d;
+  $('#dt').textContent=`${d.tarih} · ${d.yon||''} · dahili ${d.dahili||'-'} · ${d.telefon||''}`;
+  $('#dsub').textContent=`${d.dosya} · ${d.boyut_kb} KB · işleme ${d.islem_sn||'-'} sn`;
+  const q=$('#q').value.trim();
+  $('#ddokum').innerHTML=hl(d.dokum||'',q).replace(/\[SPEAKER_(\d+)\]/g,(m,n)=>`<span class="sp${n%3}">[Konuşmacı ${+n+1}]</span>`);
+  const a=d.analiz, an=$('#dan');
+  if(a&&!a.ham){const k=a.kalite||{};an.hidden=false;an.innerHTML=`<div><b>Analiz:</b> ${esc(t(a.gorusme_turu))} · puan <b>${k.genel_puan??'-'}</b> · temsilci ${esc(a.temsilci_adi||'')} · sonuç ${esc(a.sonuc||'')} · etiket ${esc(a.egitim_ornegi?.etiket||'')}</div>
+    <div>${esc(a.ozet||'')}</div>${k.gelistirilecekler?.length?`<div class="small">Geliştirilecek: ${esc(k.gelistirilecekler.join(' · '))}</div>`:''}${k.kirmizi_bayrak?`<div style="color:var(--err)">⚠ ${esc(k.kirmizi_bayrak)}</div>`:''}`}
+  else{an.hidden=true}
+  dlg.showModal(); $('#ddokum').scrollTop=0;
+}
+function copyD(){if(cur)navigator.clipboard.writeText(cur.dokum||'')}
+async function init(){
+  const f=await api('/admin/kayitlar/filtreler');
+  $('#tur').innerHTML+=f.turler.map(([k,n])=>`<option value="${k}">${t(k)} (${n})</option>`).join('')+'<option value="analiz_yok">Analiz edilmemiş</option>';
+  $('#etiket').innerHTML+=f.etiketler.map(([k,n])=>`<option value="${k}">${(k||'').replace('_',' ')} (${n})</option>`).join('');
+  $('#dahili').innerHTML+=f.dahililer.filter(x=>x[0]).map(([k,n])=>`<option value="${k}">${k} (${n})</option>`).join('');
+  $('#info').textContent=`${f.tarih_min} → ${f.tarih_max}`;
+  if(f.gece?.length){const g=f.gece[0];$('#gece').textContent=`Son gece işi: ${g[0]} · ${g[1]} · bulunan ${g[2]} · yeni ${g[3]} · işlenen ${g[4]} · atlanan ${g[5]} · hata ${g[6]}`}
+  try{const s=JSON.parse(localStorage.getItem('kayit_f')||'null');if(s){for(const k of ['q','yon','tur','etiket','dahili','per'])if(s[k])$('#'+k).value=s[k];if(s.tarih1)$('#t1').value=s.tarih1;if(s.tarih2)$('#t2').value=s.tarih2}}catch(e){}
+  load();
+}
+init();
+</script>
+</body>
+</html>
