@@ -56,7 +56,7 @@ Cevaplar birbirini tutmuyorsa en sık verilen cevabı yaz ve "celiski" alanında
 Çıktı elemanı: {"metin":"soru", "cevap":"...", "kaynak":[idx,...], "celiski":null}""",
 }
 
-def register(app, check_key, _db, api_key_getter, model_getter, prices, page_guard):
+def register(app, check_key, _db, api_key_getter, model_getter, prices, page_guard, panel_file):
     IN_PRICE, OUT_PRICE = prices
 
     def _claude(prompt, max_tokens=16000):
@@ -400,12 +400,12 @@ def register(app, check_key, _db, api_key_getter, model_getter, prices, page_gua
     def kb_page(wx_session: str | None = Cookie(None)):
         guard = page_guard(wx_session)
         if guard: return guard
-        with open(os.path.join(os.path.dirname(__file__), "kb.html"), encoding="utf-8") as f: return f.read()
+        return panel_file("kb.html")
 
     @app.get("/bilgi/mobil", response_class=HTMLResponse)
     def kb_mobile(wx_session: str | None = Cookie(None)):
         guard = page_guard(wx_session)
         if guard: return guard
-        with open(os.path.join(os.path.dirname(__file__), "kb_mobil.html"), encoding="utf-8") as f: return f.read()
+        return panel_file("kb_mobil.html")
 
     return {"consolidate": _consolidate, "items_from_rows": _items_from_rows, "build_worker": _build_worker, "export_md": _export_md}

@@ -27,15 +27,37 @@ DEFAULT_LANG = os.environ.get("LANGUAGE", "tr")
 app = FastAPI(title="WhisperX API")
 lock = threading.Lock()
 
-print("Model yükleniyor...", flush=True)
-asr_model = whisperx.load_model(MODEL_NAME, DEVICE, compute_type=COMPUTE, threads=THREADS)
-align_model, align_meta = whisperx.load_align_model(language_code=DEFAULT_LANG, device=DEVICE)
 DIARIZE_MODEL = os.environ.get("DIARIZE_MODEL", "pyannote/speaker-diarization-community-1")
-try:
-    diarize_model = DiarizationPipeline(model_name=DIARIZE_MODEL, token=HF_TOKEN, device=DEVICE)
-except TypeError:
-    diarize_model = DiarizationPipeline(model_name=DIARIZE_MODEL, use_auth_token=HF_TOKEN, device=DEVICE)
-print("Hazır.", flush=True)
+asr_model = align_model = align_meta = diarize_model = None
+MODELS_READY = False
+_model_lock = threading.Lock()
+
+def _ensure_models():
+    """Modelleri ilk ihtiyaçta (tembel) yükler; konteyner açılışı böylece saniyeler sürer."""
+    global asr_model, align_model, align_meta, diarize_model, MODELS_READY
+    if MODELS_READY: return
+    with _model_lock:
+        if MODELS_READY: return
+        print("Model yükleniyor...", flush=True)
+        asr_model = whisperx.load_model(MODEL_NAME, DEVICE, compute_type=COMPUTE, threads=THREADS)
+        align_model, align_meta = whisperx.load_align_model(language_code=DEFAULT_LANG, device=DEVICE)
+        try:
+            diarize_model = DiarizationPipeline(model_name=DIARIZE_MODEL, token=HF_TOKEN, device=DEVICE)
+        except TypeError:
+            diarize_model = DiarizationPipeline(model_name=DIARIZE_MODEL, use_auth_token=HF_TOKEN, device=DEVICE)
+        MODELS_READY = True
+        print("Hazır.", flush=True)
+
+PANEL_DIR = os.environ.get("PANEL_DIR", "/panel")
+PANEL_FILES = ("panel.html", "kb.html", "kb_mobil.html")
+
+def panel_file(name: str) -> str:
+    """Panel dosyasını önce /panel (mount) klasöründen, yoksa imajdan okur."""
+    for base in (PANEL_DIR, os.path.dirname(__file__)):
+        try:
+            with open(os.path.join(base, name), encoding="utf-8") as f: return f.read()
+        except FileNotFoundError: continue
+    return "<p>panel dosyası bulunamadı</p>"
 
 
 def _sign(payload: str) -> str:
@@ -81,8 +103,7 @@ def panel(wx_session: str | None = Cookie(None)):
         return "<p style='font-family:sans-serif;padding:20px'>PANEL_PASS ortam değişkeni ayarlanmadı; panel kapalı.</p>"
     if not session_ok(wx_session):
         return LOGIN_HTML.replace("__ERR__", "")
-    with open(os.path.join(os.path.dirname(__file__), "panel.html"), encoding="utf-8") as f:
-        return f.read()
+    return panel_file("panel.html")
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -109,7 +130,18 @@ def logout():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": MODEL_NAME}
+    return {"status": "ok", "model": MODEL_NAME, "model_loaded": MODELS_READY}
+
+
+@app.post("/admin/panel_file")
+async def panel_file_upload(request: Request, name: str, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    """Panel HTML dosyasını dağıtım yapmadan günceller (PANEL_DIR'e yazar)."""
+    check_key(authorization, wx_session)
+    if name not in PANEL_FILES: raise HTTPException(400, "izin verilmeyen dosya")
+    body = await request.body()
+    os.makedirs(PANEL_DIR, exist_ok=True)
+    with open(os.path.join(PANEL_DIR, name), "wb") as f: f.write(body)
+    return {"yazildi": name, "byte": len(body)}
 
 
 
@@ -122,6 +154,7 @@ def transcribe_path(raw_path: str, language: str = DEFAULT_LANG, min_speakers=No
              "-af", "highpass=f=200,lowpass=f=3400,loudnorm=I=-16:TP=-1.5:LRA=11", path],
             check=True,
         )
+        _ensure_models()
         with lock:
             audio = whisperx.load_audio(path)
             result = asr_model.transcribe(audio, language=language, batch_size=8)
@@ -631,4 +664,4 @@ import kb as _kb
 def _page_guard(wx_session):
     if not PANEL_PASS or not session_ok(wx_session): return LOGIN_HTML.replace("__ERR__", "")
     return None
-_kb.register(app, check_key, _db, lambda: ANTHROPIC_API_KEY, lambda: ANALYZE_MODEL, (IN_PRICE, OUT_PRICE), _page_guard)
+_kb.register(app, check_key, _db, lambda: ANTHROPIC_API_KEY, lambda: ANALYZE_MODEL, (IN_PRICE, OUT_PRICE), _page_guard, panel_file)
