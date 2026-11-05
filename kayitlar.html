@@ -47,7 +47,7 @@
 <main>
   <div class="card">
     <form class="row" onsubmit="event.preventDefault();page=1;load()">
-      <input type="search" id="q" placeholder="Dökümde veya telefon numarasında ara… (örn. dudak renklendirme, 0532 123 45 67)">
+      <input type="search" id="q" placeholder="Ara: Botoks veya 5332101010">
       <select id="yon"><option value="">Gelen + giden</option><option value="gelen">Gelen</option><option value="giden">Giden</option></select>
       <select id="tur"><option value="">Tüm kategoriler</option></select>
       <select id="etiket"><option value="">Tüm etiketler</option></select>
@@ -88,10 +88,15 @@ async function load(){
     return `<tr class="r" onclick="open_('${r.drive_id}')"><td style="white-space:nowrap">${r.tarih}</td><td><span class="badge b-${r.yon||''}">${r.yon||'-'}</span></td><td>${esc(r.dahili||'-')}</td><td class="hide-m">${esc(r.telefon||'')}</td>
       <td>${r.tur?`<span class="badge">${esc(t(r.tur))}</span>`:'<span class="small">analiz yok</span>'}${r.etiket?` <span class="badge b-${r.etiket}">${r.etiket.replace('_',' ')}</span>`:''}</td>
       <td class="puan ${pc}">${r.puan??''}</td><td class="snip">${q?hl(r.snippet,q):esc(r.ozet||r.snippet||'')}</td></tr>`}).join('')||'<tr><td colspan="7" class="small">kayıt yok</td></tr>';
-  try{localStorage.setItem('kayit_f',JSON.stringify(Object.fromEntries(p)))}catch(e){}
   window.scrollTo({top:0,behavior:'smooth'});
 }
-function reset(){for(const k of ['q','yon','tur','etiket','dahili','t1','t2'])$('#'+k).value='';page=1;load()}
+function reset(){for(const k of ['q','yon','tur','etiket','dahili','t1','t2'])$('#'+k).value='';$('#per').value='25';page=1;load()}
+function bindAuto(){
+  for(const k of ['yon','tur','etiket','dahili','t1','t2','per'])$('#'+k).addEventListener('change',()=>{page=1;load()});
+  const q=$('#q');
+  q.addEventListener('search',()=>{page=1;load()});
+  q.addEventListener('input',()=>{if(!q.value.trim()){page=1;load()}});
+}
 async function open_(id){
   const d=await api('/admin/kayit/'+id); cur=d;
   $('#dt').textContent=`${d.tarih} · ${d.yon||''} · dahili ${d.dahili||'-'} · ${d.telefon||''}`;
@@ -112,7 +117,7 @@ async function init(){
   $('#dahili').innerHTML+=f.dahililer.filter(x=>x[0]).map(([k,n])=>`<option value="${k}">${k} (${n})</option>`).join('');
   $('#info').textContent=`${f.tarih_min} → ${f.tarih_max}`;
   if(f.gece?.length){const g=f.gece[0];$('#gece').textContent=`Son gece işi: ${g[0]} · ${g[1]} · bulunan ${g[2]} · yeni ${g[3]} · işlenen ${g[4]} · atlanan ${g[5]} · hata ${g[6]} · analiz ${g[7]??0} kayıt ($${g[8]??0})`}
-  try{const s=JSON.parse(localStorage.getItem('kayit_f')||'null');if(s){for(const k of ['q','yon','tur','etiket','dahili','per'])if(s[k])$('#'+k).value=s[k];if(s.tarih1)$('#t1').value=s.tarih1;if(s.tarih2)$('#t2').value=s.tarih2}}catch(e){}
+  bindAuto();
   load();
 }
 init();

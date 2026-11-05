@@ -438,7 +438,9 @@ def daily_job(days_back=None):
         try:
             since = (_dt.datetime.now(TZ) - _dt.timedelta(days=days_back)).strftime("%Y-%m-%d")
             DAILY_STATE["simdiki"] = f"analiz ({since} sonrası)"
-            _analyze_batch_worker(int(os.environ.get("DAILY_ANALYZE_LIMIT", "400")), f"AND kayit_tarihi >= '{since}'", 2, 4)
+            yon_f = os.environ.get("DAILY_ANALYZE_YON", "gelen")
+            yon_sql = f" AND yon='{yon_f}'" if yon_f in ("gelen", "giden") else ""
+            _analyze_batch_worker(int(os.environ.get("DAILY_ANALYZE_LIMIT", "400")), f"AND kayit_tarihi >= '{since}'" + yon_sql, 2, 4)
             DAILY_STATE["analiz"] = {"yapilan": ANALYZE_STATE["yapilan"], "hata": ANALYZE_STATE["hata"], "usd": ANALYZE_STATE["tahmini_usd"]}
         except Exception as e:
             DAILY_STATE["son_hata"] = "analiz: " + str(e)[:300]
