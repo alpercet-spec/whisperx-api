@@ -77,7 +77,7 @@ Sadece aşağıdaki JSON'u döndür. Alan adlarını değiştirme, başka metin 
 }
 
 ## Puanlama rehberi (0-10)
-- karsilama_tanitim: klinik adı + kendi adı + nasılsınız; gelen aramada "nasıl yardımcı olabilirim".
+- karsilama_tanitim: GELEN aramada şirket kuralı gereği klinik adı SÖYLENMEZ (doktorlar ve kalıcı makyaj ayrı şirketler, müşterinin hangisi için aradığı bilinmiyor); doğru açılış "Merhabalar, [ad] ben, nasıl yardımcı olabilirim?" — klinik adının olmaması eksik SAYILMAZ, önerilerde klinik adı ekletme. GİDEN aramada "Aylin Çetinkaya'dan ulaşım sağlıyorum, ismim [ad], nasılsınız?" beklenir.
 - ihtiyaci_anlama: müşterinin talebini doğru anlayıp teyit etti mi, gerekirse netleştirici soru sordu mu.
 - standart_sorular: duruma uygun kontrol soruları (önceki işlem, tatil, kaç kişi, soyisim, numara, kaynak). Teyit/hatırlatma aramalarında bu alan 10 kabul edilir (gereksiz).
 - bilgi_dogrulugu_netligi: süre/kural/işlem bilgisi net ve tutarlı mı; fiyat sorulduysa net ve tereddütsüz cevaplandı mı (rakamın kendisi değerlendirilmez); "bilmiyorum" yerine yönlendirme yaptı mı.
