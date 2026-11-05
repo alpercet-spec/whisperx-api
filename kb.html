@@ -49,6 +49,7 @@
   <h1>Bilgi Tabanı — Onay Paneli</h1>
   <span class="prog" id="prog"></span>
   <span style="margin-left:auto"></span>
+  <a href="/bilgi/mobil">📱 Mobil mod</a>
   <a href="/">Ses paneli</a>
   <a href="/admin/kb/export">Export (zip)</a>
   <a href="/logout">Çıkış</a>
@@ -82,6 +83,7 @@
 <dialog id="dlg"><div class="hd"><strong id="dtitle"></strong><button class="sec sm" onclick="dlg.close()">Kapat</button></div><div class="dokum" id="ddokum"></div></dialog>
 
 <script>
+if(window.innerWidth<700&&!location.search.includes('masaustu'))location.replace('/bilgi/mobil');
 const $=s=>document.querySelector(s); const dlg=$('#dlg');
 const KATS={bilgi:'Bilgiler',kural:'Kurallar',hizmet:'Hizmetler',soru:'Standart sorular',kalip:'Kalıplar',soru_cevap:'Soru-Cevap'};
 let kat='bilgi', konu='', ozet={}, items=[];

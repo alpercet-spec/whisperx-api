@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Bilgi Onayı</title>
+<style>
+  :root{--bg:#f4f5f7;--card:#fff;--text:#1a1d21;--muted:#6b7280;--line:#e5e7eb;--accent:#0f766e;--ok:#16a34a;--err:#dc2626;--warn:#d97706;--warnbg:#fef3c7;--qbg:#dbeafe;--q:#1e40af}
+  @media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--text:#e7e9ee;--muted:#9aa3b2;--line:#2a2f3a;--warnbg:#3a2e0a;--qbg:#1e3a5f;--q:#bfdbfe}}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;background:var(--bg);color:var(--text);font:17px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding:10px 14px;display:flex;align-items:center;gap:10px}
+  header b{font-size:15px}.cnt{margin-left:auto;font-size:14px;color:var(--muted);white-space:nowrap}
+  .bar{height:5px;background:var(--line)}.bar i{display:block;height:100%;background:var(--accent);transition:.2s}
+  main{padding:14px;max-width:640px;margin:0 auto;padding-bottom:140px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px}
+  .tag{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;background:var(--line);color:var(--muted);margin-right:6px}
+  .q{background:var(--qbg);color:var(--q);padding:12px 14px;border-radius:12px;font-weight:700;font-size:17px;margin:12px 0}
+  .metin{font-size:18px;line-height:1.55;margin:10px 0}
+  .cevap{background:var(--bg);border-radius:12px;padding:12px;font-size:16px;margin-top:8px}
+  .var{font-size:14px;color:var(--muted);margin-top:8px}
+  .cel{background:var(--warnbg);color:var(--warn);padding:10px 12px;border-radius:12px;font-size:15px;margin-top:10px}
+  .links{margin-top:10px;font-size:14px}.links a{color:var(--accent);margin-right:12px;text-decoration:underline}
+  textarea{width:100%;min-height:120px;font:17px system-ui,sans-serif;padding:12px;border:1px solid var(--line);border-radius:12px;background:transparent;color:var(--text);margin-top:10px}
+  .acts{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);padding:10px 12px calc(10px + env(safe-area-inset-bottom));display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;max-width:640px;margin:0 auto}
+  .acts[hidden]{display:none}
+  .acts .row2{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  button{border:0;border-radius:14px;padding:16px 8px;font-size:17px;font-weight:700;color:#fff;cursor:pointer;min-height:56px}
+  button:active{transform:scale(.97)}
+  .ok{background:var(--ok)}.no{background:var(--err)}.ed{background:var(--accent)}
+  .ghost{background:transparent;color:var(--accent);border:2px solid var(--line);font-weight:600;font-size:15px;min-height:46px;padding:10px}
+  .start{display:grid;gap:12px}.start button{min-height:64px;font-size:18px}
+  .start .ok{background:var(--accent)}
+  .done{text-align:center;padding:40px 10px;font-size:18px}
+  .toast{position:fixed;top:60px;left:50%;transform:translateX(-50%);background:#111;color:#fff;padding:8px 14px;border-radius:999px;font-size:14px;opacity:0;transition:.2s;pointer-events:none}
+  .toast.show{opacity:.95}
+  dialog{border:0;border-radius:16px;background:var(--card);color:var(--text);width:94vw;max-width:640px;padding:0;max-height:85vh}
+  dialog .hd{padding:12px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;font-size:14px}
+  .dokum{white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;padding:12px 14px;max-height:65vh;overflow:auto}
+  .sp0{color:#0369a1}.sp1{color:#b45309}
+  .small{font-size:13px;color:var(--muted)}
+</style>
+</head>
+<body>
+<header><b>Bilgi Onayı</b><span class="cnt" id="cnt"></span><a href="/bilgi?masaustu=1" class="small" style="color:var(--accent)">Masaüstü</a></header>
+<div class="bar"><i id="bar" style="width:0"></i></div>
+<main id="main"></main>
+<div class="acts" id="acts" hidden>
+  <button class="ok" onclick="karar('onayli')">✓ Onayla</button>
+  <button class="ed" onclick="duzelt()">✎ Düzelt</button>
+  <button class="no" onclick="karar('reddedildi')">✕ Reddet</button>
+  <div class="row2"><button class="ghost" onclick="geri()">‹ Önceki</button><button class="ghost" onclick="atla()">Atla ›</button></div>
+</div>
+<div class="toast" id="toast"></div>
+<dialog id="dlg"><div class="hd"><span id="dtitle"></span><button class="ghost" style="min-height:36px;padding:4px 12px" onclick="dlg.close()">Kapat</button></div><div class="dokum" id="ddokum"></div></dialog>
+
+<script>
+const $=s=>document.querySelector(s); const dlg=$('#dlg');
+const KATS={kural:'Kural',soru_cevap:'Soru-Cevap',bilgi:'Bilgi',hizmet:'Hizmet',kalip:'Kalıp',soru:'Standart soru'};
+const ORDER=['kural','soru_cevap','bilgi','hizmet','kalip','soru'];
+let alan='', items=[], idx=0, editing=false, done=0;
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function api(u,opt){const r=await fetch(u,opt);if(r.status===401){location.href='/login';throw new Error('401')}return r.json()}
+function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),1200)}
+function save(){try{localStorage.setItem('kb_mobil',JSON.stringify({alan,idx,ids:items.map(x=>x.id)}))}catch(e){}}
+
+async function start(a){
+  alan=a; $('#main').innerHTML='<p class="small">Yükleniyor…</p>';
+  const all=[];
+  for(const k of ORDER){const p=new URLSearchParams({kategori:k,durum:'bekliyor',limit:2000});if(alan)p.set('alan',alan);const d=await api('/admin/kb/list?'+p);for(const x of d)all.push(x)}
+  // sorulu olanlar önce, sonra kategori sırası
+  all.sort((a,b)=>((b.ek?.soru?1:0)-(a.ek?.soru?1:0))||(ORDER.indexOf(a.kategori)-ORDER.indexOf(b.kategori))||(b.destek-a.destek));
+  items=all; idx=0; done=0;
+  try{const s=JSON.parse(localStorage.getItem('kb_mobil')||'null');if(s&&s.alan===alan&&s.ids){const first=s.ids[s.idx];const i=items.findIndex(x=>x.id===first);if(i>0)idx=i}}catch(e){}
+  render();
+}
+function startScreen(){
+  $('#acts').hidden=true; $('#cnt').textContent=''; $('#bar').style.width='0';
+  $('#main').innerHTML=`<div class="card start"><p>Hangi alanı onaylayacaksın?</p>
+    <button class="ok" onclick="start('kalici_makyaj')">Kalıcı makyaj</button>
+    <button class="ok" onclick="start('klinik')">Klinik işlemleri</button>
+    <button class="ghost" onclick="start('')">Tümü</button>
+    <p class="small">Sorular tek tek gelir; her tıklama anında kaydedilir, kaldığın yerden devam edersin.</p></div>`;
+}
+function render(){
+  editing=false;
+  if(idx>=items.length){$('#acts').hidden=true;$('#bar').style.width='100%';$('#cnt').textContent=`${items.length}/${items.length}`;
+    $('#main').innerHTML=`<div class="card done">🎉 Bu alanda bekleyen soru kalmadı.<br><span class="small">${done} karar verdin.</span><br><br><button class="ghost" onclick="startScreen()">Başa dön</button></div>`;save();return}
+  const it=items[idx], ek=it.ek||{};
+  $('#cnt').textContent=`${idx+1} / ${items.length}`; $('#bar').style.width=((idx)/items.length*100)+'%'; $('#acts').hidden=false;
+  let h=`<div class="card"><span class="tag">${KATS[it.kategori]||it.kategori}</span>${it.konu?`<span class="tag">${esc(it.konu)}</span>`:''}<span class="tag">${it.destek} görüşme</span>`;
+  if(ek.soru)h+=`<div class="q">❓ ${esc(ek.soru)}</div>`;
+  h+=`<div class="metin">${esc(it.nihai||it.metin)}</div>`;
+  if(ek.cevap)h+=`<div class="cevap"><b>Cevap:</b> ${esc(ek.cevap)}</div>`;
+  if(ek.varyantlar?.length)h+=`<div class="var">Diğer söyleyişler: ${esc(ek.varyantlar.slice(0,4).join(' · '))}</div>`;
+  if(it.celiski)h+=`<div class="cel">⚠ ${esc(it.celiski)}</div>`;
+  const ex=(it.ornekler||[]).slice(0,3);
+  if(ex.length)h+=`<div class="links">Kaynak görüşme: ${ex.map((d,i)=>`<a onclick="showDokum('${d}')">#${i+1}</a>`).join('')}</div>`;
+  h+=`<div id="edit" hidden><textarea id="ta">${esc(it.nihai||it.metin)}</textarea>${ek.cevap?`<textarea id="tc" placeholder="Cevap">${esc(ek.cevap)}</textarea>`:''}<button class="ed" style="width:100%;margin-top:10px" onclick="saveEdit()">Kaydet ve devam et</button></div>`;
+  $('#main').innerHTML=h+'</div>'; window.scrollTo(0,0); save();
+}
+async function karar(durum){const it=items[idx];await api('/admin/kb/item/'+it.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({durum})});done++;toast(durum==='onayli'?'Onaylandı':'Reddedildi');idx++;render()}
+function duzelt(){const e=$('#edit');e.hidden=!e.hidden;if(!e.hidden){editing=true;$('#ta').focus()}}
+async function saveEdit(){const it=items[idx];const body={durum:'duzeltildi',nihai:$('#ta').value.trim()};const tc=$('#tc');if(tc){const ek={...(it.ek||{})};ek.cevap=tc.value.trim();body.ek=ek}
+  await api('/admin/kb/item/'+it.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});done++;toast('Düzeltildi');idx++;render()}
+function atla(){idx++;render()} function geri(){if(idx>0){idx--;render()}}
+async function showDokum(id){const d=await api('/admin/dokum/'+id);$('#dtitle').textContent=`${d.tarih} · dahili ${d.dahili||''} · puan ${d.puan??'-'}`;$('#ddokum').innerHTML=esc(d.dokum||'').replace(/\[SPEAKER_(\d+)\]/g,(m,n)=>`<span class="sp${n%2}">[K${+n+1}]</span>`);dlg.showModal()}
+startScreen();
+</script>
+</body>
+</html>
