@@ -111,7 +111,7 @@ async function init(){
   $('#etiket').innerHTML+=f.etiketler.map(([k,n])=>`<option value="${k}">${(k||'').replace('_',' ')} (${n})</option>`).join('');
   $('#dahili').innerHTML+=f.dahililer.filter(x=>x[0]).map(([k,n])=>`<option value="${k}">${k} (${n})</option>`).join('');
   $('#info').textContent=`${f.tarih_min} → ${f.tarih_max}`;
-  if(f.gece?.length){const g=f.gece[0];$('#gece').textContent=`Son gece işi: ${g[0]} · ${g[1]} · bulunan ${g[2]} · yeni ${g[3]} · işlenen ${g[4]} · atlanan ${g[5]} · hata ${g[6]}`}
+  if(f.gece?.length){const g=f.gece[0];$('#gece').textContent=`Son gece işi: ${g[0]} · ${g[1]} · bulunan ${g[2]} · yeni ${g[3]} · işlenen ${g[4]} · atlanan ${g[5]} · hata ${g[6]} · analiz ${g[7]??0} kayıt ($${g[8]??0})`}
   try{const s=JSON.parse(localStorage.getItem('kayit_f')||'null');if(s){for(const k of ['q','yon','tur','etiket','dahili','per'])if(s[k])$('#'+k).value=s[k];if(s.tarih1)$('#t1').value=s.tarih1;if(s.tarih2)$('#t2').value=s.tarih2}}catch(e){}
   load();
 }

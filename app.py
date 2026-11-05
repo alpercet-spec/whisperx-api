@@ -433,11 +433,22 @@ def daily_job(days_back=None):
     except Exception as e:
         DAILY_STATE.update(durum="hata", son_hata=str(e)[:500])
     DAILY_STATE["simdiki"] = None
+    # Dökümden sonra: son günlerin analiz edilmemiş görüşmelerini Claude ile analiz et (DAILY_ANALYZE=1)
+    if os.environ.get("DAILY_ANALYZE", "1") == "1" and ANTHROPIC_API_KEY and ANALYZE_STATE["durum"] != "calisiyor":
+        try:
+            since = (_dt.datetime.now(TZ) - _dt.timedelta(days=days_back)).strftime("%Y-%m-%d")
+            DAILY_STATE["simdiki"] = f"analiz ({since} sonrası)"
+            _analyze_batch_worker(int(os.environ.get("DAILY_ANALYZE_LIMIT", "400")), f"AND kayit_tarihi >= '{since}'", 2, 4)
+            DAILY_STATE["analiz"] = {"yapilan": ANALYZE_STATE["yapilan"], "hata": ANALYZE_STATE["hata"], "usd": ANALYZE_STATE["tahmini_usd"]}
+        except Exception as e:
+            DAILY_STATE["son_hata"] = "analiz: " + str(e)[:300]
+        DAILY_STATE["simdiki"] = None
     try:
         conn = _db(); cur = conn.cursor()
-        cur.execute("CREATE TABLE IF NOT EXISTS gece_log (id INT AUTO_INCREMENT PRIMARY KEY, calisma DATETIME, durum VARCHAR(16), bulunan INT, yeni INT, islenen INT, atlanan INT, hata INT, son_hata TEXT)")
-        cur.execute("INSERT INTO gece_log (calisma,durum,bulunan,yeni,islenen,atlanan,hata,son_hata) VALUES (NOW(),%s,%s,%s,%s,%s,%s,%s)",
-                    (DAILY_STATE["durum"], DAILY_STATE["bulunan"], DAILY_STATE["yeni"], DAILY_STATE["islenen"], DAILY_STATE["atlanan"], DAILY_STATE["hata"], DAILY_STATE["son_hata"]))
+        cur.execute("CREATE TABLE IF NOT EXISTS gece_log (id INT AUTO_INCREMENT PRIMARY KEY, calisma DATETIME, durum VARCHAR(16), bulunan INT, yeni INT, islenen INT, atlanan INT, hata INT, son_hata TEXT, analiz_yapilan INT, analiz_usd DECIMAL(8,3))")
+        a = DAILY_STATE.get("analiz") or {}
+        cur.execute("INSERT INTO gece_log (calisma,durum,bulunan,yeni,islenen,atlanan,hata,son_hata,analiz_yapilan,analiz_usd) VALUES (NOW(),%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (DAILY_STATE["durum"], DAILY_STATE["bulunan"], DAILY_STATE["yeni"], DAILY_STATE["islenen"], DAILY_STATE["atlanan"], DAILY_STATE["hata"], DAILY_STATE["son_hata"], a.get("yapilan"), a.get("usd")))
         conn.commit(); conn.close()
     except Exception: pass
 
@@ -734,7 +745,7 @@ def kayit_filtreler(authorization: str | None = Header(None), wx_session: str | 
     cur.execute("SELECT etiket, COUNT(*) FROM gorusme_ozet GROUP BY 1"); etiketler = [[r[0], r[1]] for r in cur.fetchall()]
     cur.execute("SELECT MIN(kayit_tarihi), MAX(kayit_tarihi) FROM kayit_dokumleri WHERE durum='tamam'"); mn, mx = cur.fetchone()
     try:
-        cur.execute("SELECT calisma, durum, bulunan, yeni, islenen, atlanan, hata FROM gece_log ORDER BY id DESC LIMIT 10"); gece = [[str(r[0])] + list(r[1:]) for r in cur.fetchall()]
+        cur.execute("SELECT calisma, durum, bulunan, yeni, islenen, atlanan, hata, analiz_yapilan, analiz_usd FROM gece_log ORDER BY id DESC LIMIT 10"); gece = [[str(r[0])] + list(r[1:]) for r in cur.fetchall()]
     except Exception: gece = []
     conn.close()
     return {"turler": turler, "dahililer": dahililer, "etiketler": etiketler, "tarih_min": str(mn), "tarih_max": str(mx), "gece": gece}
