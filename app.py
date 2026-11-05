@@ -765,3 +765,46 @@ def _ft_bg():
         conn = _db(); cur = conn.cursor(); _ensure_fulltext(cur); conn.commit(); conn.close()
     except Exception: pass
 _th.Thread(target=_ft_bg, daemon=True).start()
+
+
+# ---------------- Dışarıda (Claude plan) yapılan analizleri içe aktarma ----------------
+class AnalizImport(BaseModel):
+    kayitlar: list[dict]   # [{"drive_id":..., "analiz":{...}}]
+
+@app.post("/admin/analyze_import")
+def analyze_import(body: AnalizImport, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    """Claude'un sohbet/plan üzerinden ürettiği analiz JSON'larını, API analiziyle aynı tablolara yazar."""
+    check_key(authorization, wx_session)
+    conn = _db(); cur = conn.cursor()
+    for ddl in EXTRACT_DDL: cur.execute(ddl)
+    ok, err = 0, []
+    for k in body.kayitlar:
+        did, out = k.get("drive_id"), k.get("analiz")
+        if not did or not isinstance(out, dict): err.append(f"{did}: eksik"); continue
+        try:
+            cur.execute("SELECT kayit_tarihi, yon, dahili FROM kayit_dokumleri WHERE drive_id=%s", (did,)); r = cur.fetchone()
+            if not r: err.append(f"{did}: kayıt yok"); continue
+            kal = out.get("kalite", {}) if isinstance(out.get("kalite"), dict) else {}
+            cur.execute("UPDATE kayit_dokumleri SET analiz=%s, genel_puan=%s, temsilci_sp=%s, sonuc=%s WHERE drive_id=%s",
+                        (json.dumps(out, ensure_ascii=False), kal.get("genel_puan"), out.get("temsilci_speaker"), (out.get("sonuc") or None), did))
+            if not out.get("ham"): extract_rows(cur, did, r[0], r[1], r[2], out)
+            conn.commit(); ok += 1
+        except Exception as e:
+            conn.rollback(); err.append(f"{did}: {str(e)[:120]}")
+    conn.close(); return {"yazilan": ok, "hata": err[:20]}
+
+@app.get("/admin/dokumler")
+def dokumler(since: str | None = None, until: str | None = None, yon: str | None = None, dahili: str | None = None, only_unanalyzed: bool = True, limit: int = 500,
+             authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    """Analiz için ham dökümleri toplu verir (Claude plan ile analiz edilecekler)."""
+    check_key(authorization, wx_session)
+    conn = _db(); cur = conn.cursor()
+    where, args = ["durum='tamam'", "CHAR_LENGTH(dokum) > 200"], []
+    if only_unanalyzed: where.append("analiz IS NULL")
+    if since and _re2.fullmatch(r"\d{4}-\d{2}-\d{2}", since): where.append("kayit_tarihi>=%s"); args.append(since)
+    if until and _re2.fullmatch(r"\d{4}-\d{2}-\d{2}", until): where.append("kayit_tarihi<=%s"); args.append(until)
+    if yon in ("gelen", "giden"): where.append("yon=%s"); args.append(yon)
+    if dahili: where.append("dahili=%s"); args.append(dahili)
+    cur.execute("SELECT drive_id, kayit_tarihi, yon, dahili, telefon, dokum FROM kayit_dokumleri WHERE " + " AND ".join(where) + " ORDER BY kayit_tarihi DESC, id DESC LIMIT %s", args + [max(1, min(limit, 2000))])
+    rows = [{"drive_id": r[0], "tarih": str(r[1]), "yon": r[2], "dahili": r[3], "telefon": r[4], "dokum": r[5]} for r in cur.fetchall()]
+    conn.close(); return rows
