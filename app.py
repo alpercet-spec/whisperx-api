@@ -718,6 +718,13 @@ def kayitlar(q: str | None = None, yon: str | None = None, dahili: str | None = 
     if tarih2 and _re2.fullmatch(r"\d{4}-\d{2}-\d{2}", tarih2): where.append("k.kayit_tarihi<=%s"); args.append(tarih2)
     if min_puan is not None: where.append("k.genel_puan>=%s"); args.append(min_puan)
     q = (q or "").strip()
+    digits = _re2.sub(r"\D", "", q)
+    if q and digits and len(digits) >= 4 and len(digits) >= len(_re2.sub(r"[\s()+\-.]", "", q)):
+        # telefon araması: 0532..., 532..., +90 532..., 90532... hepsi eşleşsin
+        if digits.startswith("90") and len(digits) >= 12: digits = digits[2:]
+        if digits.startswith("0"): digits = digits[1:]
+        where.append("k.telefon LIKE %s"); args.append(f"%{digits}%")
+        q = ""
     if q:
         ft = _ensure_fulltext(cur); conn.commit()
         if ft and len(q) >= 3 and not any(c in q for c in "+-*\"()<>~@"):
