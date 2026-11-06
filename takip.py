@@ -9,7 +9,8 @@ TZ = zoneinfo.ZoneInfo("Europe/Istanbul")
 TAKIP_HOUR = int(os.environ.get("TAKIP_HOUR", "10"))
 TAKIP_GONDEREN = os.environ.get("TAKIP_GONDEREN", "alper@oleclinic.com")
 TAKIP_ALICILAR = os.environ.get("TAKIP_ALICILAR", "saniye@iconestetik.com,alpercet@gmail.com,tugba@cetinkayabeauty.com")
-TAKIP_MODEL = os.environ.get("TAKIP_MODEL", "")  # boşsa analiz modeli
+TAKIP_MODEL = os.environ.get("TAKIP_MODEL", "")
+TAKIP_LINK = os.environ.get("TAKIP_LINK", "https://whisperx.alpercetinkaya.com/takip")  # boşsa analiz modeli
 AYLAR = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
 GUNLER = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
 STATE = {"durum": "bekliyor", "sonraki": None, "son": None, "son_hata": None}
@@ -22,7 +23,7 @@ def tarih_tr(d: dt.date) -> str:
     return f"{d.day} {AYLAR[d.month - 1]} {d.year}"
 
 
-def register(app, check_key, _db, api_key_getter, model_getter, prices, sa_json_getter, daily_state):
+def register(app, check_key, _db, api_key_getter, model_getter, prices, sa_json_getter, daily_state, page_guard=None, panel_file=None):
     in_p, out_p = prices
 
     # ---------- veri ----------
@@ -87,7 +88,8 @@ def register(app, check_key, _db, api_key_getter, model_getter, prices, sa_json_
         notlar.append(f"Randevu alanlar ({v.get('randevu_alan', '-')}) ve randevusu değişenler ({v.get('degisen', '-')}) listeye alınmadı.")
         b += ('<h2 style="font-size:15px;margin:26px 0 6px">Listeye alınmayanlar ve not</h2><ul style="font-size:13px;color:#444;padding-left:18px">'
               + "".join(f"<li>{e(n)}</li>" for n in notlar) + "</ul>")
-        b += ('<p style="font-size:12px;color:#888;margin-top:24px">Bu liste görüşme dökümlerinden otomatik çıkarıldı; müşteri bu arada WhatsApp\'tan ya da asistanla görüşmüş olabilir.</p></div>')
+        b += (f'<p style="font-size:13px;margin-top:20px"><a href="{TAKIP_LINK}?tarih={d.isoformat()}" style="color:#0f766e">Listeyi panelde aç ve durumları işaretle →</a></p>'
+              '<p style="font-size:12px;color:#888;margin-top:24px">Bu liste görüşme dökümlerinden otomatik çıkarıldı; müşteri bu arada WhatsApp\'tan ya da asistanla görüşmüş olabilir.</p></div>')
         return b
 
     # ---------- Gmail ----------
@@ -186,7 +188,54 @@ def register(app, check_key, _db, api_key_getter, model_getter, prices, sa_json_
         return {**STATE, "saat": TAKIP_HOUR, "gonderen": TAKIP_GONDEREN, "alicilar": TAKIP_ALICILAR, "son_raporlar": son}
 
     @app.get("/takip", response_class=HTMLResponse)
-    def takip_goster(tarih: str | None = None, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    def takip_sayfa(wx_session: str | None = Cookie(None)):
+        g = page_guard(wx_session) if page_guard else None
+        return g or panel_file("takip.html")
+
+    @app.get("/admin/takip/liste")
+    def takip_liste(limit: int = 60, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+        check_key(authorization, wx_session)
+        conn = _db(); cur = conn.cursor(); cur.execute(DDL)
+        cur.execute("SELECT tarih, veri, gonderildi, hata FROM takip_rapor ORDER BY tarih DESC LIMIT %s", (max(1, min(limit, 365)),))
+        out = []
+        for t, v, g, h in cur.fetchall():
+            v = json.loads(v) if v else {}
+            grp = {k: v.get(k) or [] for k in ("bugun", "randevu", "kararsiz")}
+            acik = sum(1 for k in grp for x in grp[k] if (x.get("durum") or "Bekliyor") == "Bekliyor")
+            out.append({"tarih": str(t), "tarih_tr": tarih_tr(t), "gun": GUNLER[t.weekday()], "toplam": sum(len(x) for x in grp.values()),
+                        "acik": acik, "bugun": len(grp["bugun"]), "gonderildi": bool(g), "hata": bool(h and not v)})
+        conn.close(); return out
+
+    @app.get("/admin/takip/veri")
+    def takip_veri(tarih: str | None = None, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+        check_key(authorization, wx_session)
+        d = _tarih(tarih)
+        conn = _db(); cur = conn.cursor(); cur.execute(DDL)
+        cur.execute("SELECT veri, gonderildi, alicilar FROM takip_rapor WHERE tarih=%s", (d.isoformat(),)); r = cur.fetchone(); conn.close()
+        if not r or not r[0]: raise HTTPException(404, "liste yok")
+        return {"tarih": d.isoformat(), "tarih_tr": tarih_tr(d), "gun": GUNLER[d.weekday()], "veri": json.loads(r[0]),
+                "gonderildi": str(r[1]) if r[1] else None, "alicilar": r[2]}
+
+    DURUMLAR = ("Bekliyor", "Arandı – randevu", "Arandı – randevu yok", "Ulaşılamadı", "Gerek yoktu")
+
+    @app.post("/admin/takip/isaretle")
+    def takip_isaretle(tarih: str, grup: str, i: int, durum: str, not_: str | None = None,
+                       authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+        check_key(authorization, wx_session)
+        if grup not in ("bugun", "randevu", "kararsiz") or durum not in DURUMLAR: raise HTTPException(400, "geçersiz")
+        d = _tarih(tarih)
+        conn = _db(); cur = conn.cursor()
+        cur.execute("SELECT veri FROM takip_rapor WHERE tarih=%s FOR UPDATE", (d.isoformat(),)); r = cur.fetchone()
+        if not r or not r[0]: conn.close(); raise HTTPException(404, "liste yok")
+        v = json.loads(r[0])
+        if not (0 <= i < len(v.get(grup) or [])): conn.close(); raise HTTPException(400, "satır yok")
+        v[grup][i]["durum"] = durum
+        v[grup][i]["durum_zaman"] = dt.datetime.now(TZ).strftime("%d.%m %H:%M")
+        cur.execute("UPDATE takip_rapor SET veri=%s WHERE tarih=%s", (json.dumps(v, ensure_ascii=False), d.isoformat())); conn.commit(); conn.close()
+        return {"ok": True}
+
+    @app.get("/takip/eposta", response_class=HTMLResponse)
+    def takip_eposta(tarih: str | None = None, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
         check_key(authorization, wx_session)
         d = _tarih(tarih)
         conn = _db(); cur = conn.cursor(); cur.execute(DDL)

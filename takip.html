@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Takip Listeleri</title>
+<style>
+  :root{--bg:#f4f5f7;--card:#fff;--text:#1a1d21;--muted:#6b7280;--line:#e5e7eb;--accent:#0f766e;--red:#b91c1c;--redbg:#fef2f2;--org:#c2410c;--orgbg:#fff7ed;--yel:#a16207;--yelbg:#fefce8;--ok:#15803d;--okbg:#f0fdf4}
+  @media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--text:#e7e9ee;--muted:#9aa3b2;--line:#2a2f3a;--redbg:#2a1414;--orgbg:#2a1c10;--yelbg:#26220d;--okbg:#10241a;--red:#f87171;--org:#fb923c;--yel:#facc15;--ok:#4ade80}}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  header h1{font-size:17px;margin:0}
+  header nav{margin-left:auto;display:flex;gap:14px;font-size:14px}
+  header a{color:var(--accent);text-decoration:none}
+  .gunler{display:flex;gap:8px;overflow-x:auto;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--line);scrollbar-width:none}
+  .gunler::-webkit-scrollbar{display:none}
+  .gun{flex:0 0 auto;border:1px solid var(--line);border-radius:12px;padding:6px 12px;background:transparent;color:var(--text);cursor:pointer;text-align:left;font:inherit}
+  .gun b{display:block;font-size:14px}.gun span{font-size:12px;color:var(--muted)}
+  .gun.on{border-color:var(--accent);background:var(--accent);color:#fff}.gun.on span{color:#e6fffb}
+  main{max-width:860px;margin:0 auto;padding:14px 16px 60px}
+  .ozet{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:6px}
+  .ozet p{margin:0 0 6px}.meta{font-size:12px;color:var(--muted)}
+  .bar{height:6px;background:var(--line);border-radius:3px;margin-top:10px;overflow:hidden}.bar i{display:block;height:100%;background:var(--ok)}
+  h2{font-size:16px;margin:22px 0 4px}.h2s{font-size:13px;color:var(--muted);margin:0 0 10px}
+  .kart{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--c);border-radius:12px;padding:12px 14px;margin-bottom:10px}
+  .kart.bitti{opacity:.6}
+  .ust{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .tel{font-weight:700;font-size:16px;color:var(--accent);text-decoration:none}
+  .kime{margin-left:auto;font-size:12px;padding:2px 10px;border-radius:999px;background:var(--bg);color:var(--muted)}
+  .lbl{font-size:12px;color:var(--muted);margin-top:8px}
+  .ne,.yap{margin:2px 0 0}
+  .alt{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
+  select{font:inherit;font-size:14px;padding:8px 10px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--text);min-height:40px}
+  select.d0{border-color:var(--line)} select.dok{border-color:var(--ok);color:var(--ok)}
+  .zaman{font-size:12px;color:var(--muted)}
+  ul.not{font-size:13px;color:var(--muted);padding-left:18px}
+  .bos{text-align:center;padding:40px;color:var(--muted)}
+  .filtre{display:flex;gap:8px;margin:12px 0 0;flex-wrap:wrap}
+  .filtre button{font:inherit;font-size:13px;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:999px;padding:6px 12px;cursor:pointer}
+  .filtre button.on{background:var(--text);color:var(--card);border-color:var(--text)}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#111;color:#fff;padding:8px 14px;border-radius:999px;font-size:13px;opacity:0;transition:.2s;pointer-events:none}
+  .toast.show{opacity:.95}
+  @media (max-width:600px){header{position:static}header nav{width:100%;margin-left:0;justify-content:flex-start}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Takip Listeleri</h1>
+  <nav><a href="/">Ses paneli</a><a href="/kayitlar">Kayıtlar</a><a href="/bilgi">Bilgi tabanı</a><a href="/logout">Çıkış</a></nav>
+</header>
+<div class="gunler" id="gunler"></div>
+<main id="main"><p class="bos">Yükleniyor…</p></main>
+<div class="toast" id="toast"></div>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const DUR=["Bekliyor","Arandı – randevu","Arandı – randevu yok","Ulaşılamadı","Gerek yoktu"];
+const GRUP=[["bugun","🔴 Bugün dönülmeli","Verilmiş söz, şikayet ya da dönüş bekleyen talep.","var(--red)"],
+            ["randevu","🟠 Randevu almak isteyip alamayanlar","Randevuya kararlıydı; dolu takvim, itiraz ya da beklenen bir adımda kaldı.","var(--org)"],
+            ["kararsiz","🟡 İlgili ama kararsız","Bilgi ya da fiyat alıp randevusuz ayrılanlar. Tek teklif, nazik kapanış.","var(--yel)"]];
+let cur=null, data=null, filtre="acik";
+async function api(u,o){const r=await fetch(u,o);if(r.status===401){location.href='/login';throw 0}if(!r.ok)throw new Error(await r.text());return r.json()}
+function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),1300)}
+async function gunler(){
+  const l=await api('/admin/takip/liste?limit=60');
+  if(!l.length){$('#main').innerHTML='<p class="bos">Henüz liste yok. İlk liste her sabah 10:00\'da oluşur.</p>';return}
+  const q=new URLSearchParams(location.search).get('tarih');
+  cur=q&&l.some(x=>x.tarih===q)?q:l[0].tarih;
+  $('#gunler').innerHTML=l.map(x=>`<button class="gun" data-t="${x.tarih}"><b>${esc(x.tarih_tr.replace(/ \d{4}$/,''))} ${esc(x.gun.slice(0,3))}</b><span>${x.hata?'hata':x.acik?`${x.acik} açık / ${x.toplam}`:`✓ ${x.toplam} tamam`}</span></button>`).join('');
+  document.querySelectorAll('.gun').forEach(b=>b.onclick=()=>{cur=b.dataset.t;history.replaceState(null,'','?tarih='+cur);yukle()});
+  yukle();
+}
+async function yukle(){
+  document.querySelectorAll('.gun').forEach(b=>b.classList.toggle('on',b.dataset.t===cur));
+  document.querySelector('.gun.on')?.scrollIntoView({inline:'center',block:'nearest'});
+  try{data=await api('/admin/takip/veri?tarih='+cur)}catch(e){$('#main').innerHTML='<p class="bos">Bu gün için liste oluşturulamadı.</p>';return}
+  ciz();
+}
+function ciz(){
+  const v=data.veri; let toplam=0,biten=0;
+  GRUP.forEach(([k])=>(v[k]||[]).forEach(x=>{toplam++;if((x.durum||'Bekliyor')!=='Bekliyor')biten++}));
+  let h=`<div class="ozet"><p><b>${esc(data.tarih_tr)} ${esc(data.gun)}</b> — ${esc(v.ozet_cumle)}</p>
+    <div class="meta">${data.gonderildi?'E-posta gönderildi: '+esc(data.gonderildi.slice(0,16)):'E-posta gönderilmedi'} · <a href="/takip/eposta?tarih=${data.tarih}" style="color:var(--accent)">e-posta görünümü</a></div>
+    <div class="bar"><i style="width:${toplam?biten/toplam*100:0}%"></i></div><div class="meta" style="margin-top:4px">${biten}/${toplam} işaretlendi</div>
+    <div class="filtre"><button data-f="acik" class="${filtre==='acik'?'on':''}">Açık olanlar</button><button data-f="hepsi" class="${filtre==='hepsi'?'on':''}">Hepsi</button></div></div>`;
+  GRUP.forEach(([k,bas,acik,renk])=>{
+    const rows=(v[k]||[]).map((x,i)=>[x,i]).filter(([x])=>filtre==='hepsi'||(x.durum||'Bekliyor')==='Bekliyor');
+    if(!(v[k]||[]).length)return;
+    h+=`<h2>${bas} (${(v[k]||[]).length})</h2><p class="h2s">${acik}</p>`;
+    if(!rows.length)h+=`<p class="meta">Bu grupta açık satır kalmadı ✓</p>`;
+    rows.forEach(([x,i])=>{
+      const d=x.durum||'Bekliyor', num=(x.telefon||'').split('(')[0].replace(/\D/g,'');
+      h+=`<div class="kart ${d!=='Bekliyor'?'bitti':''}" style="--c:${renk}">
+        <div class="ust"><a class="tel" href="tel:${num}">📞 ${esc(x.telefon)}</a><span class="kime">${esc(x.kime)}</span></div>
+        <div class="lbl">Ne istedi / ne oldu</div><p class="ne">${esc(x.ne)}</p>
+        <div class="lbl">Dönüşte</div><p class="yap">${esc(x.yap)}</p>
+        <div class="alt"><select class="${d==='Bekliyor'?'d0':'dok'}" data-g="${k}" data-i="${i}">${DUR.map(o=>`<option ${o===d?'selected':''}>${o}</option>`).join('')}</select>
+        ${x.durum_zaman?`<span class="zaman">${esc(x.durum_zaman)}</span>`:''}</div></div>`;
+    });
+  });
+  const notlar=v.cozulen||[];
+  if(notlar.length)h+=`<h2>Listeye alınmayanlar</h2><ul class="not">${notlar.map(n=>`<li>${esc(n)}</li>`).join('')}<li>Randevu alanlar (${esc(v.randevu_alan)}) ve randevusu değişenler (${esc(v.degisen)}) listeye alınmadı.</li></ul>`;
+  $('#main').innerHTML=h;
+  document.querySelectorAll('.filtre button').forEach(b=>b.onclick=()=>{filtre=b.dataset.f;ciz()});
+  document.querySelectorAll('select[data-g]').forEach(s=>s.onchange=async()=>{
+    const p=new URLSearchParams({tarih:cur,grup:s.dataset.g,i:s.dataset.i,durum:s.value});
+    await api('/admin/takip/isaretle?'+p,{method:'POST'});
+    const x=data.veri[s.dataset.g][+s.dataset.i]; x.durum=s.value; x.durum_zaman=new Date().toLocaleString('tr-TR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}).replace(',','');
+    toast('Kaydedildi'); ciz(); gunlerSay();
+  });
+}
+async function gunlerSay(){try{const l=await api('/admin/takip/liste?limit=60');l.forEach(x=>{const b=document.querySelector(`.gun[data-t="${x.tarih}"] span`);if(b)b.textContent=x.acik?`${x.acik} açık / ${x.toplam}`:`✓ ${x.toplam} tamam`})}catch(e){}}
+gunler();
+</script>
+</body>
+</html>

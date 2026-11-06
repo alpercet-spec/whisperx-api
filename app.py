@@ -49,7 +49,7 @@ def _ensure_models():
         print("Hazır.", flush=True)
 
 PANEL_DIR = os.environ.get("PANEL_DIR", "/panel")
-PANEL_FILES = ("panel.html", "kb.html", "kb_mobil.html", "kayitlar.html")
+PANEL_FILES = ("panel.html", "kb.html", "kb_mobil.html", "kayitlar.html", "takip.html")
 
 def panel_file(name: str) -> str:
     """Panel dosyasını önce /panel (mount) klasöründen, yoksa imajdan okur."""
@@ -689,7 +689,7 @@ _kb.register(app, check_key, _db, lambda: ANTHROPIC_API_KEY, lambda: ANALYZE_MOD
 # ---------------- Günlük takip listesi (takip.py) ----------------
 import takip as _takip
 _takip.register(app, check_key, _db, lambda: ANTHROPIC_API_KEY, lambda: ANALYZE_MODEL, (IN_PRICE, OUT_PRICE),
-                lambda: os.environ.get("GOOGLE_SA_JSON", ""), DAILY_STATE)
+                lambda: os.environ.get("GOOGLE_SA_JSON", ""), DAILY_STATE, _page_guard, panel_file)
 
 
 # ---------------- Kayıtlar sayfası (dökümleri listele / ara / filtrele) ----------------
