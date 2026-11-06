@@ -4,18 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>Bilgi Onayı</title>
+<link rel="stylesheet" href="/ui/ortak.css">
+<script src="/ui/ortak.js" defer></script>
 <style>
-  :root{--bg:#f4f5f7;--card:#fff;--text:#1a1d21;--muted:#6b7280;--line:#e5e7eb;--accent:#0f766e;--ok:#16a34a;--err:#dc2626;--warn:#d97706;--warnbg:#fef3c7;--qbg:#dbeafe;--q:#1e40af}
-  @media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--text:#e7e9ee;--muted:#9aa3b2;--line:#2a2f3a;--warnbg:#3a2e0a;--qbg:#1e3a5f;--q:#bfdbfe}}
-  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-  html,body{margin:0;background:var(--bg);color:var(--text);font:17px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-  header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding:10px 14px;display:flex;align-items:center;gap:10px}
-  header b{font-size:15px}.cnt{margin-left:auto;font-size:14px;color:var(--muted);white-space:nowrap}
-  .bar{height:5px;background:var(--line)}.bar i{display:block;height:100%;background:var(--accent);transition:.2s}
+  .bar{height:4px;background:var(--line);position:sticky;top:var(--top-h);z-index:25}.bar i{display:block;height:100%;background:var(--accent);transition:.2s}
   main{padding:14px;max-width:640px;margin:0 auto;padding-bottom:140px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px}
   .tag{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;background:var(--line);color:var(--muted);margin-right:6px}
-  .q{background:var(--qbg);color:var(--q);padding:12px 14px;border-radius:12px;font-weight:700;font-size:17px;margin:12px 0}
+  .q{background:var(--infobg);color:var(--info);padding:12px 14px;border-radius:12px;font-weight:700;font-size:17px;margin:12px 0}
   .metin{font-size:18px;line-height:1.55;margin:10px 0}
   .cevap{background:var(--bg);border-radius:12px;padding:12px;font-size:16px;margin-top:8px}
   .var{font-size:14px;color:var(--muted);margin-top:8px}
@@ -39,10 +35,19 @@
   .dokum{white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;padding:12px 14px;max-height:65vh;overflow:auto}
   .sp0{color:#0369a1}.sp1{color:#b45309}
   .small{font-size:13px;color:var(--muted)}
+
+  .cnt{font-size:13px;color:var(--muted);white-space:nowrap}
+  .q{background:var(--infobg);color:var(--info)}
+  .acts{left:var(--nav-w)!important;max-width:none!important;box-shadow:0 -6px 20px rgba(15,23,42,.08);padding-left:max(12px,calc((100vw - var(--nav-w) - 640px)/2))!important;padding-right:max(12px,calc((100vw - var(--nav-w) - 640px)/2))!important}
+  @media (max-width:900px){.acts{left:0!important;padding-left:12px!important;padding-right:12px!important}}
+  main{display:block}
 </style>
 </head>
 <body>
-<header><b>Bilgi Onayı</b><span class="cnt" id="cnt"></span><a href="/bilgi?masaustu=1" class="small" style="color:var(--accent)">Masaüstü</a></header>
+<header class="topbar">
+  <div style="min-width:0"><h1>Tek tek onay</h1></div>
+  <span class="sp"></span><span class="cnt" id="cnt"></span>
+</header>
 <div class="bar"><i id="bar" style="width:0"></i></div>
 <main id="main"></main>
 <div class="acts" id="acts" hidden>

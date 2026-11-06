@@ -49,7 +49,7 @@ def _ensure_models():
         print("Hazır.", flush=True)
 
 PANEL_DIR = os.environ.get("PANEL_DIR", "/panel")
-PANEL_FILES = ("panel.html", "kb.html", "kb_mobil.html", "kayitlar.html", "takip.html")
+PANEL_FILES = ("panel.html", "kb.html", "kb_mobil.html", "kayitlar.html", "takip.html", "ortak.css", "ortak.js")
 
 def panel_file(name: str) -> str:
     """Panel dosyasını önce /panel (mount) klasöründen, yoksa imajdan okur."""
@@ -85,13 +85,13 @@ def check_key(authorization: str | None, session: str | None = None):
 
 
 LOGIN_HTML = """<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Giriş</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;font:15px system-ui,sans-serif;background:#f4f5f7;color:#1a1d21}
-@media(prefers-color-scheme:dark){body{background:#0f1115;color:#e7e9ee}}
-form{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:28px;width:320px;display:grid;gap:12px}
-@media(prefers-color-scheme:dark){form{background:#171a21;border-color:#2a2f3a}}
-h1{font-size:18px;margin:0 0 6px}input{padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:15px;background:transparent;color:inherit}
-button{padding:10px;border:0;border-radius:8px;background:#0f766e;color:#fff;font-weight:600;cursor:pointer}.err{color:#dc2626;font-size:13px}</style></head>
-<body><form method="post" action="/login"><h1>WhisperX Panel</h1>
+<title>Giriş · Çağrı Merkezi</title><link rel="stylesheet" href="/ui/ortak.css"><style>
+body{min-height:100vh;display:grid;place-items:center;padding:16px}
+form{width:min(360px,100%);display:grid;gap:12px;padding:28px}
+.brand{display:flex;align-items:center;gap:10px;margin-bottom:8px}.logo{width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,#0f766e,#14b8a6)}
+.brand b{display:block;font-size:16px}.brand span{font-size:12.5px;color:var(--muted)}
+input{width:100%;height:44px!important}button{height:44px}.err{color:var(--err);font-size:13px}</style></head>
+<body><form class="card" method="post" action="/login"><div class="brand"><div class="logo"></div><div><b>Çağrı Merkezi</b><span>Analiz paneli</span></div></div>
 <input name="username" placeholder="Kullanıcı adı" autocomplete="username" required>
 <input name="password" type="password" placeholder="Şifre" autocomplete="current-password" required>
 <button>Giriş yap</button>__ERR__</form></body></html>"""
@@ -104,6 +104,13 @@ def panel(wx_session: str | None = Cookie(None)):
     if not session_ok(wx_session):
         return LOGIN_HTML.replace("__ERR__", "")
     return panel_file("panel.html")
+
+
+@app.get("/ui/{name}")
+def ui_asset(name: str):
+    if name not in ("ortak.css", "ortak.js"): raise HTTPException(404, "yok")
+    return Response(panel_file(name), media_type="text/css" if name.endswith(".css") else "application/javascript",
+                    headers={"Cache-Control": "public, max-age=300"})
 
 
 @app.get("/login", response_class=HTMLResponse)

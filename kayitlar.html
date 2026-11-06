@@ -4,68 +4,78 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Görüşme Kayıtları</title>
+<link rel="stylesheet" href="/ui/ortak.css">
+<script src="/ui/ortak.js" defer></script>
 <style>
-  :root{--bg:#f4f5f7;--card:#fff;--text:#1a1d21;--muted:#6b7280;--line:#e5e7eb;--accent:#0f766e;--ok:#16a34a;--err:#dc2626;--warn:#d97706;--hl:#fef08a}
-  @media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--text:#e7e9ee;--muted:#9aa3b2;--line:#2a2f3a;--hl:#854d0e}}
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-  header{padding:12px 20px;border-bottom:1px solid var(--line);background:var(--card);display:flex;align-items:center;gap:14px;flex-wrap:wrap;position:sticky;top:0;z-index:5}
-  header h1{font-size:17px;margin:0}header a{color:var(--accent);font-size:13px}
-  main{max-width:1200px;margin:0 auto;padding:16px;display:grid;gap:14px}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
-  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-  select,input{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--text);font-size:14px}
-  input[type=search]{min-width:260px;flex:1}
-  button{padding:8px 14px;border:0;border-radius:8px;background:var(--accent);color:#fff;font-weight:600;cursor:pointer;font-size:14px}
-  button.sec{background:transparent;color:var(--accent);border:1px solid var(--accent)}button:disabled{opacity:.4;cursor:default}
-  .small{font-size:12px;color:var(--muted)}
-  table{width:100%;border-collapse:collapse;font-size:14px}
-  th,td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
-  th{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
-  tr.r{cursor:pointer}tr.r:hover{background:rgba(15,118,110,.06)}
-  .badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;background:var(--line);color:var(--text);white-space:nowrap}
-  .b-gelen{background:#dcfce7;color:#166534}.b-giden{background:#dbeafe;color:#1e40af}
-  .b-iyi_ornek{background:#dcfce7;color:#166534}.b-kotu_ornek{background:#fee2e2;color:#991b1b}.b-kullanilmaz{background:#e5e7eb;color:#374151}.b-notr{background:#fef3c7;color:#92400e}
-  .puan{font-weight:700}.p-hi{color:var(--ok)}.p-mid{color:var(--warn)}.p-lo{color:var(--err)}
-  .snip{color:var(--muted);font-size:13px;max-width:520px}.snip mark{background:var(--hl);color:inherit;border-radius:3px}
+  .filtre{display:grid;grid-template-columns:minmax(220px,2fr) repeat(4,minmax(130px,1fr));gap:8px}
+  .filtre .tarih{display:flex;gap:8px;grid-column:span 2}.filtre .tarih input{flex:1;min-width:0}
+  .filtre .son{display:flex;gap:8px;grid-column:span 3;justify-content:flex-end}
+  .filtre input[type=search]{width:100%;min-width:0}
+  .filtre .ara{display:flex;gap:8px}.filtre .ek{display:contents}.ftog{display:none}
+  main>*{min-width:0}
+  tr.r{cursor:pointer}tr.r:hover td{background:color-mix(in srgb,var(--accent) 5%,transparent)}
+  .b-gelen{background:var(--okbg);color:var(--ok);border-color:transparent}.b-giden{background:var(--infobg);color:var(--info);border-color:transparent}
+  .b-iyi_ornek{background:var(--okbg);color:var(--ok);border-color:transparent}.b-kotu_ornek{background:var(--errbg);color:var(--err);border-color:transparent}.b-notr{background:var(--warnbg);color:var(--warn);border-color:transparent}
+  .puan{font-weight:700;font-variant-numeric:tabular-nums}.p-hi{color:var(--ok)}.p-mid{color:var(--warn)}.p-lo{color:var(--err)}
+  .snip{color:var(--muted);font-size:13px;max-width:520px}
   .pager{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}
-  .play{border:1px solid var(--line);background:var(--card);color:var(--accent);border-radius:999px;width:34px;height:34px;cursor:pointer;font-size:13px;padding:0}
+  .play{border:1px solid var(--line);background:var(--card);color:var(--accent-text);border-radius:999px;width:34px;height:34px;padding:0;font-size:12px}
+  .play:hover{background:var(--accent-weak)}
   .play.on{background:var(--accent);color:#fff;border-color:var(--accent)}
-  #oynatici{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--card);border-top:1px solid var(--line);padding:8px 12px calc(8px + env(safe-area-inset-bottom));display:flex;gap:10px;align-items:center;box-shadow:0 -4px 16px rgba(0,0,0,.08)}
+  #oynatici{position:fixed;left:var(--nav-w);right:0;bottom:0;z-index:40;background:var(--card);border-top:1px solid var(--line);padding:10px 16px calc(10px + env(safe-area-inset-bottom));display:flex;gap:12px;align-items:center;box-shadow:0 -6px 20px rgba(15,23,42,.08)}
   #oynatici[hidden]{display:none}
-  body{padding-bottom:90px}
-  dialog{border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--text);width:94vw;max-width:1000px;padding:0;max-height:90vh}
-  dialog .hd{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-  .dokum{white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;padding:14px 16px;max-height:60vh;overflow:auto}
+  #oynatici button{width:36px;padding:0}
+  body{padding-bottom:96px}
+  dialog{width:94vw;max-width:1000px;max-height:90vh}
+  .dokum{white-space:pre-wrap;font-size:13px;padding:14px 18px;max-height:56vh;overflow:auto;line-height:1.6}
   .sp0{color:#0369a1}.sp1{color:#b45309}.sp2{color:#7c3aed}
-  .an{padding:10px 16px;border-top:1px solid var(--line);font-size:14px;display:grid;gap:4px}
-  .gece{font-size:12px;color:var(--muted)}
-  @media (max-width:700px){.hide-m{display:none}th,td{padding:7px 5px}.snip{max-width:none}}
+  @media (prefers-color-scheme:dark){.sp0{color:#7dd3fc}.sp1{color:#fbbf24}.sp2{color:#c4b5fd}}
+  .an{padding:12px 18px;border-top:1px solid var(--line);font-size:14px;display:grid;gap:4px;background:var(--line2)}
+  .gece{font-size:12px;color:var(--muted);margin-top:8px}
+  .tblwrap{overflow-x:auto;margin-top:12px}
+  @media (max-width:1100px){.filtre{grid-template-columns:1fr 1fr 1fr}.filtre .ara{grid-column:1/-1}.filtre .tarih{grid-column:span 2}.filtre .son{grid-column:span 1}}
+  @media (max-width:900px){#oynatici{left:0}}
+  @media (max-width:700px){
+    .filtre{grid-template-columns:1fr 1fr}.filtre .ara,.filtre .tarih,.filtre .son{grid-column:1/-1}.filtre .son button{flex:1}
+    .ftog{display:inline-flex}.filtre .ek{display:none}.filtre.acik .ek{display:contents}
+    .filtre .tarih input{font-size:14px!important}
+    .hide-m{display:none}
+    table,tbody{display:block}thead{display:none}
+    tr.r{display:grid;grid-template-columns:40px 1fr auto;grid-template-areas:"p t s" "p k k" "x x x";gap:4px 10px;padding:12px 4px;border-bottom:1px solid var(--line)}
+    tr.r td{border:0;padding:0;background:none!important}
+    tr.r td:nth-child(1){grid-area:p;align-self:center}
+    tr.r td:nth-child(2){grid-area:t;font-weight:600;font-size:13px;white-space:normal!important;min-width:0}
+    tr.r td:nth-child(3),tr.r td:nth-child(4){display:none}
+    tr.r td:nth-child(6){grid-area:k}
+    tr.r td:nth-child(7){grid-area:s;font-size:16px}
+    tr.r td:nth-child(8){grid-area:x;max-width:none}
+    tr.r td:nth-child(2)::after{content:attr(data-m);font-weight:400;color:var(--muted);margin-left:6px}
+    .pager .row{width:100%}.pager .row button{flex:1}
+  }
 </style>
 </head>
 <body>
-<header>
-  <h1>Görüşme Kayıtları</h1><span class="small" id="info"></span>
-  <span style="margin-left:auto"></span>
-  <a href="/">Ses paneli</a><a href="/bilgi">Bilgi tabanı</a><a href="/takip">Takip</a><a href="/logout">Çıkış</a>
+<header class="topbar">
+  <div style="min-width:0"><h1>Görüşme kayıtları</h1><div class="sub" id="info"></div></div>
 </header>
 <main>
   <div class="card">
-    <form class="row" onsubmit="event.preventDefault();page=1;load()">
-      <input type="search" id="q" placeholder="Ara: Botoks veya 5332101010">
+    <form class="filtre" onsubmit="event.preventDefault();page=1;load()">
+      <div class="ara"><input type="search" id="q" placeholder="Ara: Botoks veya 5332101010"><button type="button" class="sec ftog" onclick="this.closest('form').classList.toggle('acik')">Filtre</button></div>
+      <div class="ek">
       <select id="yon"><option value="">Gelen + giden</option><option value="gelen">Gelen</option><option value="giden">Giden</option></select>
       <select id="tur"><option value="">Tüm kategoriler</option></select>
       <select id="etiket"><option value="">Tüm etiketler</option></select>
       <select id="dahili"><option value="">Tüm dahililer</option></select>
-      <input type="date" id="t1" title="Başlangıç"><input type="date" id="t2" title="Bitiş">
-      <select id="per"><option>25</option><option>50</option><option>100</option></select>
-      <button>Ara</button><button type="button" class="sec" onclick="reset()">Temizle</button>
+      <div class="tarih"><input type="date" id="t1" title="Başlangıç"><input type="date" id="t2" title="Bitiş"></div>
+      <div class="son"><select id="per"><option>25</option><option>50</option><option>100</option></select><button>Ara</button><button type="button" class="sec" onclick="reset()">Temizle</button></div>
+      </div>
     </form>
     <div class="gece" id="gece"></div>
   </div>
   <div class="card">
     <div class="pager"><span id="count" class="small"></span><div class="row"><button class="sec" id="prev" onclick="page--;load()">‹ Önceki</button><span id="pg" class="small"></span><button class="sec" id="next" onclick="page++;load()">Sonraki ›</button></div></div>
-    <table style="margin-top:10px"><thead><tr><th style="width:44px"></th><th>Tarih</th><th>Yön</th><th>Dahili</th><th class="hide-m">Telefon</th><th>Kategori</th><th>Puan</th><th>Özet / eşleşen metin</th></tr></thead><tbody id="rows"></tbody></table>
+    <div class="tblwrap"><table><thead><tr><th style="width:44px"></th><th>Tarih</th><th>Yön</th><th>Dahili</th><th class="hide-m">Telefon</th><th>Kategori</th><th>Puan</th><th>Özet / eşleşen metin</th></tr></thead><tbody id="rows"></tbody></table></div>
     <div class="pager" style="margin-top:10px"><span></span><div class="row"><button class="sec" onclick="page--;load()" id="prev2">‹ Önceki</button><button class="sec" onclick="page++;load()" id="next2">Sonraki ›</button></div></div>
   </div>
 </main>
@@ -92,7 +102,7 @@ async function load(){
   for(const id of ['prev','prev2'])$('#'+id).disabled=page<=1; for(const id of ['next','next2'])$('#'+id).disabled=page>=pages;
   $('#rows').innerHTML=d.kayitlar.map(r=>{
     const pc=r.puan==null?'':(r.puan>=70?'p-hi':r.puan>=50?'p-mid':'p-lo');
-    return `<tr class="r" data-lbl="${esc(r.tarih+' · '+(r.yon||'')+' · dahili '+(r.dahili||'-')+' · '+(r.telefon||''))}" onclick="open_('${r.drive_id}')"><td><button class="play" id="pl_${r.drive_id}" title="Dinle" onclick="event.stopPropagation();cal('${r.drive_id}',this.closest('tr').dataset.lbl)">▶</button></td><td style="white-space:nowrap">${r.tarih}</td><td><span class="badge b-${r.yon||''}">${r.yon||'-'}</span></td><td>${esc(r.dahili||'-')}</td><td class="hide-m">${esc(r.telefon||'')}</td>
+    return `<tr class="r" data-lbl="${esc(r.tarih+' · '+(r.yon||'')+' · dahili '+(r.dahili||'-')+' · '+(r.telefon||''))}" onclick="open_('${r.drive_id}')"><td><button class="play" id="pl_${r.drive_id}" title="Dinle" onclick="event.stopPropagation();cal('${r.drive_id}',this.closest('tr').dataset.lbl)">▶</button></td><td style="white-space:nowrap" data-m="${esc((r.yon||'')+' · '+(r.dahili||'-')+(r.telefon?' · '+r.telefon:''))}">${r.tarih}</td><td><span class="badge b-${r.yon||''}">${r.yon||'-'}</span></td><td>${esc(r.dahili||'-')}</td><td class="hide-m">${esc(r.telefon||'')}</td>
       <td>${r.tur?`<span class="badge">${esc(t(r.tur))}</span>`:'<span class="small">analiz yok</span>'}${r.etiket?` <span class="badge b-${r.etiket}">${r.etiket.replace('_',' ')}</span>`:''}</td>
       <td class="puan ${pc}">${r.puan??''}</td><td class="snip">${q?hl(r.snippet,q):esc(r.ozet||r.snippet||'')}</td></tr>`}).join('')||'<tr><td colspan="8" class="small">kayıt yok</td></tr>';
   window.scrollTo({top:0,behavior:'smooth'});
