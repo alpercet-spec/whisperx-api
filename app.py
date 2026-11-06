@@ -686,6 +686,11 @@ def _page_guard(wx_session):
     return None
 _kb.register(app, check_key, _db, lambda: ANTHROPIC_API_KEY, lambda: ANALYZE_MODEL, (IN_PRICE, OUT_PRICE), _page_guard, panel_file)
 
+# ---------------- Günlük takip listesi (takip.py) ----------------
+import takip as _takip
+_takip.register(app, check_key, _db, lambda: ANTHROPIC_API_KEY, lambda: ANALYZE_MODEL, (IN_PRICE, OUT_PRICE),
+                lambda: os.environ.get("GOOGLE_SA_JSON", ""), DAILY_STATE)
+
 
 # ---------------- Kayıtlar sayfası (dökümleri listele / ara / filtrele) ----------------
 import re as _re2
