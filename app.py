@@ -10,7 +10,7 @@ import time
 import whisperx
 from whisperx.diarize import DiarizationPipeline
 from fastapi import Cookie, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 
 HF_TOKEN = os.environ["HF_TOKEN"]
 API_KEY = os.environ.get("API_KEY", "")
@@ -453,6 +453,8 @@ def daily_job(days_back=None):
                     (DAILY_STATE["durum"], DAILY_STATE["bulunan"], DAILY_STATE["yeni"], DAILY_STATE["islenen"], DAILY_STATE["atlanan"], DAILY_STATE["hata"], DAILY_STATE["son_hata"], a.get("yapilan"), a.get("usd")))
         conn.commit(); conn.close()
     except Exception: pass
+    try: _ses_temizle(SES_MAX_SAAT)   # dinlenen ses kayıtlarının geçici kopyalarını sil
+    except Exception: pass
 
 def _scheduler():
     while True:
@@ -763,6 +765,89 @@ def kayit_filtreler(authorization: str | None = Header(None), wx_session: str | 
     except Exception: gece = []
     conn.close()
     return {"turler": turler, "dahililer": dahililer, "etiketler": etiketler, "tarih_min": str(mn), "tarih_max": str(mx), "gece": gece}
+
+# ---------------- Ses kaydı dinleme (Drive -> geçici önbellek) ----------------
+SES_DIR = os.environ.get("SES_DIR", "/tmp/ses_cache")
+SES_MAX_SAAT = int(os.environ.get("SES_MAX_SAAT", "24"))       # gece bu kadar saatten eski dosyalar silinir
+SES_MAX_MB = int(os.environ.get("SES_MAX_MB", "1000"))          # önbellek bu boyutu aşarsa en eskiler silinir
+_ses_locks: dict = {}
+
+def _ses_temizle(max_saat=None):
+    if not os.path.isdir(SES_DIR): return 0
+    files = [(os.path.join(SES_DIR, f), os.stat(os.path.join(SES_DIR, f))) for f in os.listdir(SES_DIR)]
+    silinen, now = 0, time.time()
+    if max_saat is not None:
+        for p, st in files:
+            if now - st.st_mtime > max_saat * 3600:
+                try: os.remove(p); silinen += 1
+                except OSError: pass
+    files = sorted([(p, os.stat(p)) for p, _ in files if os.path.exists(p)], key=lambda x: x[1].st_mtime)
+    toplam = sum(st.st_size for _, st in files)
+    while files and toplam > SES_MAX_MB * 1024 * 1024:
+        p, st = files.pop(0)
+        try: os.remove(p); toplam -= st.st_size; silinen += 1
+        except OSError: pass
+    return silinen
+
+def _ses_dosya(drive_id: str) -> str:
+    if not _re.fullmatch(r"[A-Za-z0-9_\-]{10,128}", drive_id): raise HTTPException(400, "geçersiz id")
+    os.makedirs(SES_DIR, exist_ok=True)
+    conn = _db(); cur = conn.cursor()
+    cur.execute("SELECT dosya_adi FROM kayit_dokumleri WHERE drive_id=%s", (drive_id,)); r = cur.fetchone(); conn.close()
+    if not r: raise HTTPException(404, "kayıt yok")
+    ext = (os.path.splitext(r[0] or "")[1] or ".mp3").lower()
+    path = os.path.join(SES_DIR, drive_id + ext)
+    if os.path.exists(path):
+        os.utime(path, None); return path
+    lk = _ses_locks.setdefault(drive_id, threading.Lock())
+    with lk:
+        if os.path.exists(path): return path
+        from googleapiclient.http import MediaIoBaseDownload
+        d = _drive_service()
+        tmp = path + ".part"
+        with open(tmp, "wb") as fh:
+            dl = MediaIoBaseDownload(fh, d.files().get_media(fileId=drive_id, supportsAllDrives=True), chunksize=4 * 1024 * 1024)
+            done = False
+            while not done: _, done = dl.next_chunk()
+        os.replace(tmp, path)
+    _ses_locks.pop(drive_id, None)
+    try: _ses_temizle(None)
+    except Exception: pass
+    return path
+
+@app.get("/admin/ses/{drive_id}")
+def ses(drive_id: str, request: Request, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    check_key(authorization, wx_session)
+    try: path = _ses_dosya(drive_id)
+    except HTTPException: raise
+    except Exception as e: raise HTTPException(502, "Drive'dan indirilemedi: " + str(e)[:200])
+    size = os.path.getsize(path)
+    ctype = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg", ".m4a": "audio/mp4", ".gsm": "audio/x-gsm"}.get(os.path.splitext(path)[1], "application/octet-stream")
+    rng = request.headers.get("range")
+    start, end = 0, size - 1
+    if rng:
+        m = _re.match(r"bytes=(\d*)-(\d*)", rng)
+        if m:
+            if m.group(1): start = int(m.group(1))
+            if m.group(2): end = min(int(m.group(2)), size - 1)
+            if not m.group(1) and m.group(2): start, end = max(0, size - int(m.group(2))), size - 1
+    if start > end or start >= size:
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+    def it():
+        with open(path, "rb") as f:
+            f.seek(start); left = end - start + 1
+            while left > 0:
+                chunk = f.read(min(256 * 1024, left))
+                if not chunk: break
+                left -= len(chunk); yield chunk
+    hdr = {"Accept-Ranges": "bytes", "Content-Length": str(end - start + 1), "Cache-Control": "private, max-age=3600"}
+    if rng: hdr["Content-Range"] = f"bytes {start}-{end}/{size}"
+    return StreamingResponse(it(), status_code=206 if rng else 200, media_type=ctype, headers=hdr)
+
+@app.post("/admin/ses_temizle")
+def ses_temizle(saat: int = 0, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):
+    check_key(authorization, wx_session)
+    return {"silinen": _ses_temizle(saat)}
 
 @app.get("/admin/kayit/{drive_id}")
 def kayit_detay(drive_id: str, authorization: str | None = Header(None), wx_session: str | None = Cookie(None)):

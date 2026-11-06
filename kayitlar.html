@@ -29,6 +29,11 @@
   .puan{font-weight:700}.p-hi{color:var(--ok)}.p-mid{color:var(--warn)}.p-lo{color:var(--err)}
   .snip{color:var(--muted);font-size:13px;max-width:520px}.snip mark{background:var(--hl);color:inherit;border-radius:3px}
   .pager{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+  .play{border:1px solid var(--line);background:var(--card);color:var(--accent);border-radius:999px;width:34px;height:34px;cursor:pointer;font-size:13px;padding:0}
+  .play.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  #oynatici{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--card);border-top:1px solid var(--line);padding:8px 12px calc(8px + env(safe-area-inset-bottom));display:flex;gap:10px;align-items:center;box-shadow:0 -4px 16px rgba(0,0,0,.08)}
+  #oynatici[hidden]{display:none}
+  body{padding-bottom:90px}
   dialog{border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--text);width:94vw;max-width:1000px;padding:0;max-height:90vh}
   dialog .hd{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
   .dokum{white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;padding:14px 16px;max-height:60vh;overflow:auto}
@@ -60,15 +65,17 @@
   </div>
   <div class="card">
     <div class="pager"><span id="count" class="small"></span><div class="row"><button class="sec" id="prev" onclick="page--;load()">‹ Önceki</button><span id="pg" class="small"></span><button class="sec" id="next" onclick="page++;load()">Sonraki ›</button></div></div>
-    <table style="margin-top:10px"><thead><tr><th>Tarih</th><th>Yön</th><th>Dahili</th><th class="hide-m">Telefon</th><th>Kategori</th><th>Puan</th><th>Özet / eşleşen metin</th></tr></thead><tbody id="rows"></tbody></table>
+    <table style="margin-top:10px"><thead><tr><th style="width:44px"></th><th>Tarih</th><th>Yön</th><th>Dahili</th><th class="hide-m">Telefon</th><th>Kategori</th><th>Puan</th><th>Özet / eşleşen metin</th></tr></thead><tbody id="rows"></tbody></table>
     <div class="pager" style="margin-top:10px"><span></span><div class="row"><button class="sec" onclick="page--;load()" id="prev2">‹ Önceki</button><button class="sec" onclick="page++;load()" id="next2">Sonraki ›</button></div></div>
   </div>
 </main>
 <dialog id="dlg">
   <div class="hd"><div><b id="dt"></b><div class="small" id="dsub"></div></div><div class="row"><button class="sec" onclick="copyD()">Kopyala</button><button class="sec" onclick="dlg.close()">Kapat</button></div></div>
+  <div style="padding:10px 16px 0"><audio id="daudio" controls preload="none" style="width:100%"></audio><div class="small" id="dses"></div></div>
   <div class="dokum" id="ddokum"></div>
   <div class="an" id="dan" hidden></div>
 </dialog>
+<div id="oynatici" hidden><button class="sec" onclick="kapatOyn()" title="Kapat">✕</button><div style="flex:1;min-width:0"><div class="small" id="oyn_lbl" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div><audio id="oyn" controls preload="none" style="width:100%"></audio></div></div>
 <script>
 const $=s=>document.querySelector(s); const dlg=$('#dlg'); let page=1, cur=null;
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -78,16 +85,16 @@ const t=k=>TUR[k]||(k||'').replace(/_/g,' ');
 function qs(){const p=new URLSearchParams({page,per:$('#per').value});for(const k of ['q','yon','tur','etiket','dahili']){const v=$('#'+k).value;if(v)p.set(k,v)}if($('#t1').value)p.set('tarih1',$('#t1').value);if($('#t2').value)p.set('tarih2',$('#t2').value);return p}
 function hl(s,q){s=esc(s);if(!q)return s;for(const w of q.split(/\s+/).filter(w=>w.length>=2)){s=s.replace(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi'),m=>'<mark>'+m+'</mark>')}return s}
 async function load(){
-  const p=qs(); $('#rows').innerHTML='<tr><td colspan="7" class="small">yükleniyor…</td></tr>';
+  const p=qs(); $('#rows').innerHTML='<tr><td colspan="8" class="small">yükleniyor…</td></tr>';
   const d=await api('/admin/kayitlar?'+p); const q=$('#q').value.trim();
   const pages=Math.max(1,Math.ceil(d.toplam/d.per)); if(page>pages){page=pages;return load()}
   $('#count').textContent=`${d.toplam.toLocaleString('tr')} kayıt`; $('#pg').textContent=`sayfa ${page} / ${pages}`;
   for(const id of ['prev','prev2'])$('#'+id).disabled=page<=1; for(const id of ['next','next2'])$('#'+id).disabled=page>=pages;
   $('#rows').innerHTML=d.kayitlar.map(r=>{
     const pc=r.puan==null?'':(r.puan>=70?'p-hi':r.puan>=50?'p-mid':'p-lo');
-    return `<tr class="r" onclick="open_('${r.drive_id}')"><td style="white-space:nowrap">${r.tarih}</td><td><span class="badge b-${r.yon||''}">${r.yon||'-'}</span></td><td>${esc(r.dahili||'-')}</td><td class="hide-m">${esc(r.telefon||'')}</td>
+    return `<tr class="r" data-lbl="${esc(r.tarih+' · '+(r.yon||'')+' · dahili '+(r.dahili||'-')+' · '+(r.telefon||''))}" onclick="open_('${r.drive_id}')"><td><button class="play" id="pl_${r.drive_id}" title="Dinle" onclick="event.stopPropagation();cal('${r.drive_id}',this.closest('tr').dataset.lbl)">▶</button></td><td style="white-space:nowrap">${r.tarih}</td><td><span class="badge b-${r.yon||''}">${r.yon||'-'}</span></td><td>${esc(r.dahili||'-')}</td><td class="hide-m">${esc(r.telefon||'')}</td>
       <td>${r.tur?`<span class="badge">${esc(t(r.tur))}</span>`:'<span class="small">analiz yok</span>'}${r.etiket?` <span class="badge b-${r.etiket}">${r.etiket.replace('_',' ')}</span>`:''}</td>
-      <td class="puan ${pc}">${r.puan??''}</td><td class="snip">${q?hl(r.snippet,q):esc(r.ozet||r.snippet||'')}</td></tr>`}).join('')||'<tr><td colspan="7" class="small">kayıt yok</td></tr>';
+      <td class="puan ${pc}">${r.puan??''}</td><td class="snip">${q?hl(r.snippet,q):esc(r.ozet||r.snippet||'')}</td></tr>`}).join('')||'<tr><td colspan="8" class="small">kayıt yok</td></tr>';
   window.scrollTo({top:0,behavior:'smooth'});
 }
 function reset(){for(const k of ['q','yon','tur','etiket','dahili','t1','t2'])$('#'+k).value='';$('#per').value='25';page=1;load()}
@@ -107,8 +114,22 @@ async function open_(id){
   if(a&&!a.ham){const k=a.kalite||{};an.hidden=false;an.innerHTML=`<div><b>Analiz:</b> ${esc(t(a.gorusme_turu))} · puan <b>${k.genel_puan??'-'}</b> · temsilci ${esc(a.temsilci_adi||'')} · sonuç ${esc(a.sonuc||'')} · etiket ${esc(a.egitim_ornegi?.etiket||'')}</div>
     <div>${esc(a.ozet||'')}</div>${k.gelistirilecekler?.length?`<div class="small">Geliştirilecek: ${esc(k.gelistirilecekler.join(' · '))}</div>`:''}${k.kirmizi_bayrak?`<div style="color:var(--err)">⚠ ${esc(k.kirmizi_bayrak)}</div>`:''}`}
   else{an.hidden=true}
+  const au=$('#daudio'); oyn.pause(); au.src='/admin/ses/'+id; $('#dses').textContent='▶ ile dinleyin (ilk açılışta Drive\'dan birkaç saniyede gelir)';
+  au.onplaying=()=>$('#dses').textContent=''; au.onerror=()=>$('#dses').textContent='Ses kaydı açılamadı.';
   dlg.showModal(); $('#ddokum').scrollTop=0;
 }
+const oyn=document.getElementById('oyn'); let calan=null;
+function cal(id,lbl){
+  if(calan===id&&!oyn.paused){oyn.pause();return}
+  document.querySelectorAll('.play.on').forEach(b=>{b.classList.remove('on');b.textContent='▶'});
+  if(calan!==id){oyn.src='/admin/ses/'+id; calan=id; $('#oyn_lbl').textContent='Yükleniyor… '+(lbl||'')}
+  $('#oynatici').hidden=false; oyn.play().catch(()=>{});
+  oyn.onplaying=()=>{$('#oyn_lbl').textContent=lbl||'';const b=document.getElementById('pl_'+id);if(b){b.classList.add('on');b.textContent='❚❚'}};
+  oyn.onpause=oyn.onended=()=>{const b=document.getElementById('pl_'+id);if(b){b.classList.remove('on');b.textContent='▶'}};
+  oyn.onerror=()=>{$('#oyn_lbl').textContent='Ses kaydı açılamadı: '+(lbl||'')};
+}
+function kapatOyn(){oyn.pause();oyn.removeAttribute('src');oyn.load();calan=null;$('#oynatici').hidden=true;document.querySelectorAll('.play.on').forEach(b=>{b.classList.remove('on');b.textContent='▶'})}
+$('#dlg').addEventListener('close',()=>$('#daudio').pause());
 function copyD(){if(cur)navigator.clipboard.writeText(cur.dokum||'')}
 async function init(){
   const f=await api('/admin/kayitlar/filtreler');
